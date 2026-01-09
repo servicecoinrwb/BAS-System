@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cypher | Building Intelligence</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        .spin-slow { animation: spin 3s linear infinite; }
+        .spin-fast { animation: spin 0.5s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .unit-card .delete-btn { opacity: 0; pointer-events: none; transition: all 0.2s; }
+        .unit-card:hover .delete-btn { opacity: 1; pointer-events: auto; }
+        .floorplan-container { position: relative; width: 100%; height: 600px; background: #e2e8f0; overflow: hidden; border-radius: 0.75rem; border: 2px dashed #cbd5e1; }
+        .floorplan-container img { width: 100%; height: 100%; object-fit: contain; }
+        .sensor-dot { position: absolute; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); cursor: grab; transform: translate(-50%, -50%); transition: transform 0.1s; }
+        .sensor-dot:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.2); }
+        .sensor-tooltip { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
+        .sensor-dot:hover .sensor-tooltip { opacity: 1; }
+        @keyframes pulse-blue { 0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); } 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); } }
+        @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+        @keyframes flow { 0% { stroke-dashoffset: 20; } 100% { stroke-dashoffset: 0; } }
+        .card-cooling { border-color: #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
+        .card-heating { border-color: #f97316; box-shadow: 0 0 15px rgba(249, 115, 22, 0.3); }
+        .card-alarm { border-color: #ef4444; animation: pulse-red 1s infinite; }
+        .anim-flow { stroke-dasharray: 5; animation: flow 1s linear infinite; }
+        
+        /* Enhanced Faceplate Animations */
+        .animate-spin-fast { animation: spin 0.8s linear infinite; }
+        .flow-line { stroke-dasharray: 10, 10; animation: flow 1s linear infinite; opacity: 0.6; }
+        @keyframes flow { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+        .coil-active-cool { filter: drop-shadow(0 0 4px #38bdf8); transition: all 0.5s; }
+        .coil-active-heat { filter: drop-shadow(0 0 4px #f97316); transition: all 0.5s; }
+        .damper-blade { transition: transform 0.5s ease-in-out; transform-box: fill-box; transform-origin: center; }
+        
+        .site-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-size: cover; background-position: center; z-index: -1; opacity: 0.15; filter: blur(3px); pointer-events: none; }
+        
+        /* Terminal Style for Logs */
+        .terminal-logs { background-color: #1e1e1e; color: #4ade80; font-family: 'Courier New', Courier, monospace; }
+        .terminal-logs tr:hover { background-color: #333; }
+        .terminal-logs td { border-bottom: 1px solid #333; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+    <div id="app" class="container mx-auto p-4 max-w-6xl relative min-h-screen">
+        <div v-if="status.site && status.site.image" class="site-bg" :style="{backgroundImage: 'url(' + status.site.image + ')'}"></div>
+        
+        <div v-if="!status.authenticated" class="fixed inset-0 bg-slate-900 flex items-center justify-center p-4 z-[100]">
+            <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm text-center">
+                <h2 class="text-2xl font-bold mb-6 text-slate-800">System Login</h2>
+                <input v-model="loginForm.username" class="w-full border p-3 rounded mb-4" placeholder="Username" @keyup.enter="doLogin">
+                <input v-model="loginForm.password" type="password" class="w-full border p-3 rounded mb-6" placeholder="Password" @keyup.enter="doLogin">
+                <button @click="doLogin" class="w-full bg-sky-600 text-white font-bold py-3 rounded hover:bg-sky-700 transition">Sign In</button>
+                <div v-if="loginError" class="text-red-500 mt-4 text-sm">{{ loginError }}</div>
+            </div>
+        </div>
+        <div v-else>
+            <header class="flex flex-col md:flex-row justify-between items-center mb-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden">
+                <div v-if="status.global_settings?.emergency_stop" class="absolute top-0 left-0 w-full bg-red-600 text-white text-center text-xs font-bold py-1 z-10 animate-pulse">⚠️ EMERGENCY STOP ACTIVE ⚠️</div>
+                <div class="mb-4 md:mb-0 mt-2 flex items-center gap-4">
+                    <img v-if="status.site.image" :src="status.site.image" class="h-12 w-12 rounded-lg object-cover bg-slate-200">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-900 tracking-tight">{{ status.site?.name || 'Building Automation' }}</h1>
+                        <div class="text-sm text-slate-500 flex items-center gap-2">
+                            <span class="font-medium text-slate-600">{{ status.site?.address }}</span>
+                            <span class="text-green-600 font-bold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Online</span>
+                            <div class="ml-4 flex items-center gap-2">
+                                <span class="text-xs bg-slate-100 px-2 py-1 rounded">User: {{ status.username }}</span>
+                                <button @click="doLogout" class="text-xs bg-red-100 text-red-600 px-2 py-1 rounded hover:bg-red-200 font-bold transition">Sign Out</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4">
+                    <button @click="showAlarmPanel = true" class="relative p-2 rounded-full bg-slate-100 hover:bg-slate-200 transition text-slate-500">
+                        🔔 <span v-if="activeAlarmCount > 0" class="absolute top-0 right-0 bg-red-500 text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">{{ activeAlarmCount }}</span>
+                    </button>
+                    <div class="text-right"><div class="text-4xl font-black text-sky-600">{{ status.outdoor }}&deg;F</div><div class="text-xs text-slate-400 uppercase font-bold tracking-wider">Outdoor</div></div>
+                    <button v-if="isAdmin" @click="showSettings = true" class="p-2 rounded-full bg-slate-100 hover:bg-slate-200 transition text-slate-500">⚙️</button>
+                </div>
+            </header>
+            
+            <div class="mb-8 flex gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200 justify-between items-center">
+                <div class="flex gap-4">
+                    <button @click="viewMode = 'dashboard'" :class="viewMode === 'dashboard' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'text-slate-500 hover:bg-slate-50'" class="px-4 py-2 rounded-lg font-bold border transition">Dashboard</button>
+                    <button @click="viewMode = 'graphics'" :class="viewMode === 'graphics' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'text-slate-500 hover:bg-slate-50'" class="px-4 py-2 rounded-lg font-bold border transition">Graphics</button>
+                    <button @click="viewMode = 'points'" :class="viewMode === 'points' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'text-slate-500 hover:bg-slate-50'" class="px-4 py-2 rounded-lg font-bold border transition">Points List</button>
+                    <button @click="viewMode = 'alarms'" :class="viewMode === 'alarms' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'text-slate-500 hover:bg-slate-50'" class="px-4 py-2 rounded-lg font-bold border transition relative">
+                        Alarm Console
+                        <span v-if="activeAlarmCount > 0" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] px-1.5 rounded-full">{{ activeAlarmCount }}</span>
+                    </button>
+                </div>
+                <div class="flex gap-2 items-center bg-slate-100 p-1 rounded-lg">
+                    <!-- New 3-Way Occupancy Toggle -->
+                    <button @click="setOccupancy('AUTO')" :class="status.occupancy_override === null ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1.5 rounded text-xs font-bold transition">AUTO</button>
+                    <button @click="setOccupancy('OCCUPIED')" :class="status.occupancy_override === true ? 'bg-green-500 text-white shadow' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1.5 rounded text-xs font-bold transition">OCC</button>
+                    <button @click="setOccupancy('UNOCCUPIED')" :class="status.occupancy_override === false ? 'bg-slate-600 text-white shadow' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1.5 rounded text-xs font-bold transition">UNOCC</button>
+                    
+                    <div class="h-6 w-px bg-slate-300 mx-2"></div>
+                    
+                    <button v-if="isAdmin" @click="showScheduleEditor = true" class="px-4 py-2 rounded-lg font-bold bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 transition text-sm">📅 Schedule</button>
+                    <button v-if="isAdmin" @click="showAddUnit = true" class="px-4 py-2 rounded-lg font-bold bg-green-500 hover:bg-green-600 text-white border border-green-600 transition text-sm">➕ Add Unit</button>
+                </div>
+            </div>
+
+            <!-- Dashboard View -->
+            <div v-if="viewMode === 'dashboard'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Unit Card Loop -->
+                <div v-for="u in status.units" :key="u.id" 
+                    class="unit-card bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative flex flex-col group"
+                    :class="[
+                        u.state.includes('COOL') ? 'card-cooling' : '',
+                        u.state.includes('HEAT') ? 'card-heating' : '',
+                        (u.alarms.length > 0 && u.alarms_enabled) ? 'card-alarm' : ''
+                    ]"
+                >
+                    <div v-if="!u.alarms_enabled" class="absolute top-2 left-2 z-20 bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded border border-red-200">ALARMS DISABLED</div>
+                    <button v-if="isAdmin" @click="deleteUnit(u.id)" class="delete-btn absolute top-2 right-2 bg-red-100 text-red-600 hover:bg-red-200 p-1.5 rounded-full z-10">🗑️</button>
+                    
+                    <div v-if="u.image" class="h-32 w-full bg-cover bg-center relative" :style="{backgroundImage: 'url(' + u.image + ')'}">
+                        <div class="absolute inset-0 bg-gradient-to-b from-transparent to-black/50"></div>
+                        <div class="absolute bottom-2 left-4 text-white font-bold text-shadow">{{ u.name }}</div>
+                    </div>
+                    <div v-else class="h-2 w-full" :class="getStateColor(u.state)"></div>
+                    
+                    <div class="p-6 flex-1 flex flex-col">
+                        <div class="flex justify-between items-start mb-4" v-if="!u.image">
+                            <div><h3 class="font-bold text-lg text-slate-800">{{ u.name }}</h3><span class="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-500 border border-slate-200">{{ u.type }}</span></div>
+                            <div class="text-right">
+                                <div class="text-3xl font-bold tracking-tighter text-slate-900">{{ u.temp }}&deg;</div>
+                                <div class="text-xs text-slate-400 font-medium uppercase tracking-wide">Actual</div>
+                                <div v-if="u.dat_val !== null" class="mt-1 text-xs font-mono text-slate-500">DAT: {{ u.dat_val }}&deg;</div>
+                            </div>
+                        </div>
+                        <div v-else class="flex justify-between items-center mb-4">
+                             <div class="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-500 border border-slate-200">{{ u.type }}</div>
+                             <div class="text-3xl font-bold tracking-tighter text-slate-900">{{ u.temp }}&deg;</div>
+                        </div>
+
+                        <div class="flex items-center gap-3 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                            <div class="flex items-center justify-center w-12 h-12 rounded-full bg-white border border-slate-200 shadow-sm">
+                                <svg v-if="u.outputs.cool" class="w-8 h-8 text-sky-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                                </svg>
+                                <svg v-else-if="u.outputs.heat" class="w-8 h-8 text-orange-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" />
+                                </svg>
+                                <svg v-else-if="u.outputs.fan" class="w-8 h-8 text-green-500 spin-slow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9zM3.512 15H9v5.488A9.025 9.025 0 013.512 15zM9 3.512V9H3.512A9.025 9.025 0 019 3.512zM15 20.488V15h5.488A9.025 9.025 0 0115 20.488z" />
+                                </svg>
+                                <svg v-else class="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                </svg>
+                            </div>
+                            <div class="flex-1">
+                                <div class="text-xs text-slate-400 font-bold uppercase">Status</div><div class="text-sm font-bold text-slate-700">{{ u.state }}</div>
+                            </div>
+                            <div class="ml-auto text-right">
+                                 <div class="text-xs text-slate-400 font-bold uppercase">Mode</div><div class="text-xs font-bold px-2 py-0.5 rounded" :class="u.is_occupied ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'">{{ u.is_occupied ? 'OCC' : 'UNOCC' }}</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-auto pt-4 border-t border-slate-100 flex gap-2">
+                             <button @click="openDetail(u)" class="text-xs font-bold px-4 py-2 rounded bg-sky-50 text-sky-600 hover:bg-sky-100 flex-1 flex items-center justify-center gap-1"><span>🎛️</span> Faceplate</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Points List View -->
+            <div v-if="viewMode === 'points'" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                        <tr>
+                            <th class="px-6 py-3">Unit Name</th>
+                            <th class="px-6 py-3">Status</th>
+                            <th class="px-6 py-3 text-right">Temp</th>
+                            <th class="px-6 py-3 text-right">Setpoint</th>
+                            <th class="px-6 py-3 text-center">Fan</th>
+                            <th class="px-6 py-3 text-center">Cool</th>
+                            <th class="px-6 py-3 text-center">Heat</th>
+                            <th class="px-6 py-3 text-right">Damper</th>
+                            <th class="px-6 py-3 text-right">CO2</th>
+                            <th class="px-6 py-3 text-center">Maint Mode</th>
+                            <th class="px-6 py-3 text-center">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <tr v-for="u in status.units" :key="u.id" class="hover:bg-slate-50 transition">
+                            <td class="px-6 py-4 font-bold text-slate-700">{{ u.name }}</td>
+                            <td class="px-6 py-4">
+                                <span class="px-2 py-1 rounded text-xs font-bold" :class="u.alarms.length > 0 && u.alarms_enabled ? 'bg-red-100 text-red-700 animate-pulse' : (u.state === 'OFF' ? 'bg-slate-100 text-slate-500' : 'bg-green-100 text-green-700')">
+                                    {{ u.alarms.length > 0 && u.alarms_enabled ? 'ALARM' : u.state }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-right font-mono font-bold text-slate-800">{{ u.temp }}°</td>
+                            <td class="px-6 py-4 text-right font-mono text-slate-500">{{ u.is_occupied ? u.setpoints.occ_cool : u.setpoints.unocc_cool }}°</td>
+                            <td class="px-6 py-4 text-center">
+                                <span class="w-3 h-3 rounded-full inline-block" :class="u.overrides.fan !== undefined ? 'bg-purple-500' : (u.outputs.fan ? 'bg-green-500' : 'bg-slate-300')"></span>
+                            </td>
+                            <td class="px-6 py-4 text-center">
+                                <span class="w-3 h-3 rounded-full inline-block" :class="u.overrides.cool !== undefined ? 'bg-purple-500' : (u.outputs.cool ? 'bg-blue-500' : 'bg-slate-300')"></span>
+                            </td>
+                            <td class="px-6 py-4 text-center">
+                                <span class="w-3 h-3 rounded-full inline-block" :class="u.overrides.heat !== undefined ? 'bg-purple-500' : (u.outputs.heat ? 'bg-orange-500' : 'bg-slate-300')"></span>
+                            </td>
+                            <td class="px-6 py-4 text-right font-mono">{{ u.outputs.damper }}%</td>
+                            <td class="px-6 py-4 text-right font-mono">{{ u.secondary_val || '--' }}</td>
+                            <td class="px-6 py-4 text-center">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" class="sr-only peer" :checked="!u.alarms_enabled" @change="toggleAlarmConfig(u.id, !($event.target.checked))">
+                                    <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-400"></div>
+                                </label>
+                            </td>
+                            <td class="px-6 py-4 text-center">
+                                <button @click="openDetail(u)" class="text-xs font-bold text-sky-600 hover:underline">View</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Graphics View -->
+            <div v-if="viewMode === 'graphics'">
+                <div class="mb-4 flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200">
+                    <h3 class="font-bold text-lg text-slate-700">Floorplan Graphics</h3>
+                    <div class="flex gap-4 items-center">
+                        <label v-if="isEditingGraphics" class="text-sm text-slate-500">
+                            Upload Floorplan: <input type="file" @change="uploadFloorplan" class="ml-2 text-xs">
+                        </label>
+                        <div class="flex items-center gap-2">
+                             <span class="text-xs font-bold uppercase text-slate-500">Edit Mode</span>
+                             <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="isEditingGraphics" class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                             </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="floorplan-container" @mousemove="onDragMove" @mouseup="onDragEnd" @mouseleave="onDragEnd">
+                    <img v-if="status.site.floorplan" :src="status.site.floorplan" draggable="false">
+                    <div v-else class="flex items-center justify-center h-full text-slate-400 font-bold">No Floorplan Uploaded. Switch to Edit Mode to upload.</div>
+                    
+                    <div v-for="u in status.units" :key="u.id" 
+                        class="sensor-dot"
+                        :class="getDotColor(u.state)"
+                        :style="{ left: u.x + '%', top: u.y + '%' }"
+                        @mousedown.prevent="startDrag(u, $event)"
+                        @click="!isEditingGraphics && openDetail(u)"
+                    >
+                        <div class="sensor-tooltip">
+                            <div class="font-bold">{{ u.name }}</div>
+                            <div>{{ u.temp }}&deg;</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alarm Console View -->
+            <div v-if="viewMode === 'alarms'" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[calc(100vh-200px)]">
+                <div class="flex border-b border-slate-100 bg-slate-50">
+                    <button @click="alarmTab = 'active'" :class="alarmTab === 'active' ? 'border-b-2 border-red-500 text-red-700 bg-red-50' : 'text-slate-500 hover:bg-slate-100'" class="px-6 py-3 font-bold text-sm transition">Active Alarms ({{ activeAlarmCount }})</button>
+                    <button @click="alarmTab = 'history'" :class="alarmTab === 'history' ? 'border-b-2 border-slate-500 text-slate-700 bg-slate-100' : 'text-slate-500 hover:bg-slate-100'" class="px-6 py-3 font-bold text-sm transition">Alarm History</button>
+                </div>
+
+                <div v-if="alarmTab === 'active'" class="flex-1 overflow-y-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-xs sticky top-0">
+                            <tr>
+                                <th class="px-6 py-3">Time</th>
+                                <th class="px-6 py-3">Severity</th>
+                                <th class="px-6 py-3">Unit</th>
+                                <th class="px-6 py-3">Message</th>
+                                <th class="px-6 py-3">State</th>
+                                <th class="px-6 py-3 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template v-for="u in status.units" :key="u.id">
+                                <tr v-for="a in u.alarms" :key="a.key" class="hover:bg-slate-50">
+                                    <td class="px-6 py-4 text-slate-500 font-mono">{{ new Date(a.ts * 1000).toLocaleString() }}</td>
+                                    <td class="px-6 py-4"><span class="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold border border-red-200">CRITICAL</span></td>
+                                    <td class="px-6 py-4 font-bold text-slate-700">{{ u.name }}</td>
+                                    <td class="px-6 py-4 text-slate-800">{{ a.msg }}</td>
+                                    <td class="px-6 py-4">
+                                        <span v-if="!a.acked" class="text-red-600 font-bold animate-pulse">ACTIVE</span>
+                                        <span v-else class="text-orange-500 font-bold">ACKNOWLEDGED</span>
+                                    </td>
+                                    <td class="px-6 py-4 text-right">
+                                         <button v-if="!a.acked" @click="ackAlarm(u.id, a.key)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-bold transition shadow-sm">Acknowledge</button>
+                                         <span v-else class="text-slate-400 text-xs italic">User: {{ status.username }}</span>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr v-if="unitsWithAlarms.length === 0">
+                                <td colspan="6" class="px-6 py-12 text-center text-slate-400 italic">No active alarms. System normal.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div v-if="alarmTab === 'history'" class="flex-1 overflow-y-auto">
+                      <table class="w-full text-sm text-left">
+                        <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-xs sticky top-0">
+                            <tr>
+                                <th class="px-6 py-3">Time</th>
+                                <th class="px-6 py-3">Type</th>
+                                <th class="px-6 py-3">Source</th>
+                                <th class="px-6 py-3">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <tr v-for="(l, i) in systemLogs" :key="i" class="hover:bg-slate-50">
+                                <td class="px-6 py-3 text-slate-500 font-mono w-48">{{ new Date(l.ts*1000).toLocaleString() }}</td>
+                                <td class="px-6 py-3 font-bold w-32" :class="{'text-red-500': l.type==='ALARM', 'text-green-500': l.type==='ACK', 'text-purple-600': l.type==='AUDIT'}">{{ l.type }}</td>
+                                <td class="px-6 py-3 text-slate-600 w-48 font-bold">{{ l.unit }}</td>
+                                <td class="px-6 py-3 text-slate-800">{{ l.msg }}</td>
+                            </tr>
+                        </tbody>
+                      </table>
+                </div>
+            </div>
+            <!-- Footer -->
+            <footer class="mt-12 bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row items-center justify-between gap-6">
+                <div class="flex items-center gap-6">
+                    <img src="https://imageview.replit.app/objects/uploads/d16ab63e-1d1e-4b8f-863c-67e66e4894fc" class="h-16 w-auto object-contain">
+                    <div class="text-sm text-slate-600">
+                        <h4 class="font-bold text-slate-800 text-lg">Mechanical Temp</h4>
+                        <p>23093 Telegraph Rd<br>Southfield, MI 48033</p>
+                        <p class="font-bold mt-1">313-282-4758</p>
+                        <p class="text-xs mt-2 text-slate-400">Dashboard v2.2 (Sensor Config)</p>
+                    </div>
+                </div>
+                <div>
+                    <a href="https://mechanicaltemp.com/" target="_blank" class="bg-sky-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-sky-700 transition flex items-center gap-2">
+                        <span>🔧 Schedule Service</span>
+                    </a>
+                </div>
+            </footer>
+
+        </div>
+        
+        <!-- (Modals included in script below) -->
+        <!-- Add Unit Modal -->
+        <div v-if="showAddUnit" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[150]" @click.self="showAddUnit = false">
+             <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+                 <h2 class="text-xl font-bold mb-4">Add New RTU</h2>
+                 <input v-model="newUnit.name" class="w-full border p-2 rounded mb-3" placeholder="Unit Name">
+                 
+                 <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Modbus Addr</label>
+                        <input v-model.number="newUnit.modbus_addr" type="number" class="w-full border p-2 rounded">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">MQTT Topic</label>
+                        <input v-model="newUnit.mqtt_topic" class="w-full border p-2 rounded" placeholder="bms/sensor/1">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">BACnet IP</label>
+                        <input v-model="newUnit.bacnet_ip" class="w-full border p-2 rounded" placeholder="192.168.1.10">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">BACnet Obj</label>
+                        <input v-model="newUnit.bacnet_obj" class="w-full border p-2 rounded" placeholder="analogValue 1">
+                    </div>
+                 </div>
+
+                 <select v-model="newUnit.secondary_sensor" class="w-full border p-2 rounded mb-4">
+                     <option :value="null">No Secondary Sensor</option>
+                     <option value="CO2">CO2 Sensor</option>
+                 </select>
+                 <div class="flex justify-end gap-2">
+                     <button @click="showAddUnit = false" class="text-slate-500 font-bold">Cancel</button>
+                     <button @click="createUnit" class="bg-green-600 text-white px-4 py-2 rounded font-bold">Create</button>
+                 </div>
+             </div>
+        </div>
+
+        <!-- Schedule Editor Modal -->
+        <div v-if="showScheduleEditor" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[150]" @click.self="showScheduleEditor = false">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden">
+                <div class="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <h3 class="font-bold text-xl text-slate-800">Schedule Editor</h3>
+                    <div class="flex gap-2">
+                        <button @click="createNewSchedule" class="bg-green-50 text-green-600 px-3 py-1 rounded text-sm font-bold border border-green-200 hover:bg-green-100">+ New</button>
+                        <button @click="saveSchedule" class="bg-sky-600 text-white px-3 py-1 rounded text-sm font-bold hover:bg-sky-700">Save</button>
+                        <button @click="showScheduleEditor = false" class="text-slate-400 hover:text-red-500 font-bold text-2xl leading-none ml-2">&times;</button>
+                    </div>
+                </div>
+                
+                <div class="flex h-full overflow-hidden">
+                    <!-- Sidebar List -->
+                    <div class="w-1/4 border-r border-slate-100 overflow-y-auto bg-slate-50/50 p-2">
+                         <div v-for="s in status.schedules" :key="s.id" 
+                              @click="selectedSchedule = JSON.parse(JSON.stringify(s))"
+                              class="p-3 rounded cursor-pointer mb-1 transition"
+                              :class="selectedSchedule && selectedSchedule.id === s.id ? 'bg-white shadow border-l-4 border-sky-500' : 'hover:bg-slate-100 text-slate-500'">
+                             <div class="font-bold text-sm">{{ s.name }}</div>
+                             <div class="text-[10px] uppercase font-mono mt-1">ID: {{ s.id }}</div>
+                          </div>
+                    </div>
+
+                    <!-- Editor Area -->
+                    <div class="w-3/4 overflow-y-auto p-6" v-if="selectedSchedule">
+                        <div class="mb-6">
+                            <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Schedule Name</label>
+                            <input v-model="selectedSchedule.name" class="w-full text-lg font-bold border-b-2 border-slate-200 focus:border-sky-500 outline-none py-1">
+                        </div>
+
+                        <div class="space-y-2">
+                            <div v-for="(dayName, dayIndex) in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']" :key="dayIndex" 
+                                 class="flex items-center gap-4 p-3 rounded-lg border transition"
+                                 :class="selectedSchedule.days[dayIndex].enabled ? 'bg-white border-slate-200' : 'bg-slate-50 border-transparent opacity-60'">
+                                
+                                <div class="w-24 font-bold text-slate-700">{{ dayName }}</div>
+                                
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" v-model="selectedSchedule.days[dayIndex].enabled" class="sr-only peer">
+                                    <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+                                </label>
+
+                                <div class="flex items-center gap-2 ml-auto" v-if="selectedSchedule.days[dayIndex].enabled">
+                                    <input type="time" v-model="selectedSchedule.days[dayIndex].start" class="border rounded px-2 py-1 text-sm font-mono bg-slate-50">
+                                    <span class="text-slate-400 font-bold text-xs">TO</span>
+                                    <input type="time" v-model="selectedSchedule.days[dayIndex].end" class="border rounded px-2 py-1 text-sm font-mono bg-slate-50">
+                                </div>
+                                <div v-else class="ml-auto text-xs font-bold text-slate-400 uppercase tracking-widest">Unoccupied</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="w-3/4 flex items-center justify-center text-slate-400 font-bold">
+                        Select a schedule to edit
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Unit Faceplate Modal -->
+        <div v-if="unitDetailModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[150]" @click.self="unitDetailModal = null">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden relative">
+                <!-- Info Slide-over Panel -->
+                <div v-if="showInfoPanel" class="absolute inset-0 bg-white/95 z-50 p-8 overflow-y-auto backdrop-blur flex flex-col">
+                    <div class="flex justify-between items-start mb-6 border-b pb-4">
+                        <div>
+                            <h3 class="font-bold text-2xl text-slate-800">Sequence of Operations</h3>
+                            <p class="text-slate-500 text-sm">RTU Control Logic Description</p>
+                        </div>
+                        <button @click="showInfoPanel = false" class="text-slate-400 hover:text-slate-600 font-bold text-lg px-4 py-2 border rounded hover:bg-slate-100">Close</button>
+                    </div>
+                    <div class="space-y-6 text-slate-700 max-w-3xl">
+                        <div>
+                            <h4 class="font-bold text-lg text-sky-700 mb-2">1. Occupancy & Scheduling</h4>
+                            <p class="mb-2">The unit determines occupancy based on the assigned weekly schedule. Holiday exceptions override the weekly schedule to "Unoccupied".</p>
+                            <ul class="list-disc pl-5 text-sm space-y-1 text-slate-600">
+                                <li><strong>Occupied Mode:</strong> Supply Fan runs continuously to provide ventilation. Temperature setpoints are tighter (e.g., 74°F Cool / 68°F Heat).</li>
+                                <li><strong>Unoccupied Mode:</strong> Supply Fan cycles on only when there is a call for heating or cooling. Temperature setpoints are relaxed (e.g., 85°F Cool / 60°F Heat) to save energy.</li>
+                            </ul>
+                        </div>
+
+                        <div>
+                            <h4 class="font-bold text-lg text-sky-700 mb-2">2. Cooling Mode</h4>
+                            <p class="mb-2">Cooling is enabled when the Zone Temperature rises above the active Cooling Setpoint plus the Deadband (default 2°F).</p>
+                            <div class="bg-slate-50 p-4 rounded border border-slate-200">
+                                <h5 class="font-bold text-sm uppercase text-slate-500 mb-2">Economizer (Free Cooling)</h5>
+                                <p class="text-sm mb-2">If the Outdoor Air Temperature is below the <span class="font-mono text-xs bg-slate-200 px-1 rounded">Cooling Setpoint - Economizer Differential</span> (default 5°F), the unit enters Economizer Mode.</p>
+                                <ul class="list-disc pl-5 text-sm space-y-1 text-slate-600">
+                                    <li>Mechanical Cooling (Compressors) are LOCKED OUT.</li>
+                                    <li>Outside Air Damper modulates to 100% open.</li>
+                                </ul>
+                                <h5 class="font-bold text-sm uppercase text-slate-500 mt-3 mb-2">Mechanical Cooling</h5>
+                                <p class="text-sm">If outdoor conditions are not suitable for economizing, the unit activates mechanical cooling stages (Y1).</p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="font-bold text-lg text-orange-600 mb-2">3. Heating Mode</h4>
+                            <p class="text-sm">Heating (W1) is enabled when the Zone Temperature drops below the active Heating Setpoint minus the Deadband. The Supply Fan turns on (if not already running) and the heat source activates.</p>
+                        </div>
+
+                        <div>
+                            <h4 class="font-bold text-lg text-purple-600 mb-2">4. Demand Control Ventilation (DCV)</h4>
+                            <p class="text-sm">If a CO2 sensor is installed, the outside air damper will modulate to maintain air quality during Occupied periods.</p>
+                            <ul class="list-disc pl-5 text-sm space-y-1 text-slate-600 mt-2">
+                                <li><strong>Base Ventilation:</strong> Damper stays at Minimum Position (default 20%) when Occupied.</li>
+                                <li><strong>Active Control:</strong> If CO2 rises above the Target (800 PPM), the damper modulates open proportionally towards 100% to flush the space with fresh air.</li>
+                            </ul>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-lg text-red-600 mb-2">5. Safeties & Alarms</h4>
+                            <ul class="list-disc pl-5 text-sm space-y-1 text-slate-600">
+                                <li><strong>Fan Failure:</strong> If the Fan Command is ON but the Fan Status switch remains OFF for >30 seconds, the unit shuts down and triggers a "FAN FAIL" alarm.</li>
+                                <li><strong>Freeze Protection:</strong> If Discharge Air Temp drops below 40°F, a Low Temp alarm is generated.</li>
+                                <li><strong>Emergency Stop:</strong> A global software or hardware kill-switch immediately disables all outputs.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            
+                <div class="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-2xl text-slate-800">{{ unitDetailModal.name }}</h3>
+                        <span class="text-sm font-mono text-slate-500 uppercase">{{ unitDetailModal.type }} | {{ unitDetailModal.state }}</span>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <button @click="showInfoPanel = true" class="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition">
+                             <span>ℹ️ Sequence</span>
+                        </button>
+                        <button v-if="isAdmin" @click="showPinConfig = !showPinConfig" class="bg-purple-50 text-purple-600 hover:bg-purple-100 border border-purple-200 px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition">
+                             <span>🔧 Edit Config</span>
+                        </button>
+                        <label v-if="isAdmin" class="cursor-pointer bg-white text-slate-600 hover:text-sky-600 border border-slate-200 px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition">
+                             <span>📷 Upload Card Photo</span>
+                             <input type="file" accept="image/*" class="hidden" @change="uploadUnitImage($event, unitDetailModal.id)">
+                        </label>
+                        <button v-if="isAdmin && unitDetailModal.image" @click="clearUnitImage(unitDetailModal.id)" class="text-red-400 hover:text-red-600 font-bold text-xs">Remove Photo</button>
+                        
+                        <label class="flex items-center gap-2 cursor-pointer bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 hover:bg-slate-200">
+                             <span class="text-xs font-bold text-slate-600">Alarms</span>
+                             <div class="relative w-8 h-4 bg-slate-300 rounded-full transition-colors" :class="unitDetailModal.alarms_enabled ? 'bg-green-500' : 'bg-red-400'">
+                                 <div class="absolute top-0.5 left-0.5 bg-white w-3 h-3 rounded-full transition-transform" :class="unitDetailModal.alarms_enabled ? 'translate-x-4' : ''"></div>
+                             </div>
+                             <input type="checkbox" class="hidden" :checked="unitDetailModal.alarms_enabled" @change="toggleAlarmConfig(unitDetailModal.id, $event.target.checked)">
+                        </label>
+                        <button v-if="isAdmin" @click="deleteUnit(unitDetailModal.id); unitDetailModal=null" class="text-red-400 hover:text-red-600 font-bold text-sm px-4">Delete</button>
+                        <button @click="showHistory(unitDetailModal.id)" class="text-sky-500 hover:text-sky-700 font-bold text-sm px-4">Trends</button>
+                        <button @click="unitDetailModal = null" class="text-slate-400 hover:text-red-500 font-bold text-3xl leading-none">&times;</button>
+                    </div>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-8 bg-slate-50/50">
+                    <!-- HARDWARE PIN CONFIGURATION MODAL (Admin Only) -->
+                    <div v-if="isAdmin && showPinConfig" class="bg-white p-6 rounded-xl shadow-sm border border-purple-200 mb-8 border-l-4 border-l-purple-500 space-y-6">
+                        <div class="text-sm text-purple-600 uppercase font-bold border-b pb-2 flex justify-between">
+                            <span>Configuration</span>
+                            <button @click="showPinConfig = false" class="text-xs text-slate-400 hover:text-slate-600">Close</button>
+                        </div>
+                        
+                        <!-- 1. Hardware Pins -->
+                        <div>
+                             <h5 class="text-xs font-bold text-slate-400 uppercase mb-3">Modbus Coil/Input Indexes</h5>
+                             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div v-for="(pin, key) in unitDetailModal.pins" :key="key">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">{{ key }}</label>
+                                    <smart-input :value="pin" type="number" @update="updatePin(unitDetailModal.id, key, $event)" class="w-full border p-2 rounded bg-purple-50 focus:bg-white transition"></smart-input>
+                                </div>
+                                <!-- Add buttons for common missing pins if they don't exist in map -->
+                                <div v-for="k in ['G','Y1','Y2','W1','DMP','fan_status','filter_status']" :key="k">
+                                    <div v-if="unitDetailModal.pins[k] === undefined">
+                                        <label class="block text-xs font-bold text-slate-400 uppercase mb-1">{{ k }} (Unassigned)</label>
+                                        <smart-input value="" placeholder="Index #" type="number" @update="updatePin(unitDetailModal.id, k, $event)" class="w-full border p-2 rounded bg-slate-50 focus:bg-white border-dashed"></smart-input>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 2. Custom Points Manager -->
+                        <div class="pt-4 border-t border-purple-100">
+                             <h5 class="text-xs font-bold text-slate-400 uppercase mb-3">Points Database Manager</h5>
+                             
+                             <!-- List Existing Custom Sensors -->
+                             <div v-if="Object.keys(unitDetailModal.custom_sensors).length > 0" class="mb-4 space-y-2">
+                                <div v-for="(reg, name) in unitDetailModal.custom_sensors" :key="name" class="flex items-center justify-between bg-purple-50 p-2 rounded border border-purple-100">
+                                    <span class="font-bold text-sm text-purple-800">{{ name }} <span class="text-xs font-mono text-purple-400">(Reg: {{ reg }})</span></span>
+                                    <button @click="managePoint(unitDetailModal.id, 'delete', name, 'sensor')" class="text-red-400 hover:text-red-600 text-xs font-bold">Delete</button>
+                                </div>
+                             </div>
+
+                             <!-- Add New Point Form -->
+                             <div class="flex gap-4 items-end">
+                                 <div class="flex-1">
+                                     <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Point Name</label>
+                                     <input v-model="newPoint.name" placeholder="e.g. Return Humidity" class="w-full border p-2 rounded text-sm">
+                                 </div>
+                                 <div class="w-32">
+                                     <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Type</label>
+                                     <select v-model="newPoint.type" class="w-full border p-2 rounded text-sm bg-white">
+                                         <option value="sensor">Sensor (Modbus)</option>
+                                         <option value="setpoint">Setpoint (Var)</option>
+                                     </select>
+                                 </div>
+                                 <div class="w-24">
+                                     <label class="block text-xs font-bold text-slate-500 uppercase mb-1">{{ newPoint.type === 'sensor' ? 'Register' : 'Value' }}</label>
+                                     <input v-model.number="newPoint.val" type="number" class="w-full border p-2 rounded text-sm">
+                                 </div>
+                                 <button @click="addPoint" class="bg-purple-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-purple-700">Add Point</button>
+                             </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+                        <!-- Left Column: Graphic & Main Readings -->
+                        <div class="space-y-6">
+                             <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden relative min-h-[200px] flex items-center justify-center bg-slate-100">
+                                 <!-- ALWAYS SHOW ANIMATED GRAPHIC HERE -->
+                                 <div class="w-full h-full p-4" v-html="renderUnitGraphic(unitDetailModal)"></div>
+                             </div>
+                             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 text-center">
+                                <div class="text-sm text-slate-400 uppercase font-bold mb-2">Primary Sensor</div>
+                                <div class="text-6xl font-black text-slate-800 tracking-tighter">{{ unitDetailModal.temp }}<span class="text-2xl text-slate-400">&deg;</span></div>
+                                <div v-if="unitDetailModal.is_simulating" class="mt-2 inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-yellow-200">
+                                    <span>⚠️</span> VIRTUAL
+                                </div>
+                             </div>
+                             
+                             <div v-if="unitDetailModal.dat_val !== null" class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 text-center">
+                                <div class="text-sm text-slate-400 uppercase font-bold mb-2">Discharge Air</div>
+                                <div class="text-4xl font-bold text-sky-600">{{ unitDetailModal.dat_val }}<span class="text-xl text-sky-300">&deg;</span></div>
+                             </div>
+                             
+                             <div v-if="unitDetailModal.secondary_val !== null" class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 text-center">
+                                <div class="text-sm text-slate-400 uppercase font-bold mb-2">Air Quality & Ventilation</div>
+                                <div class="flex justify-around items-center">
+                                    <div><div class="text-3xl font-bold text-purple-600">{{ unitDetailModal.secondary_val }}</div><div class="text-xs text-slate-400">{{ unitDetailModal.secondary_type }}</div></div>
+                                    <div v-if="unitDetailModal.outputs.damper !== undefined">
+                                        <div class="text-3xl font-bold text-blue-600">{{ unitDetailModal.outputs.damper }}%</div><div class="text-xs text-slate-400">Fresh Air</div>
+                                    </div>
+                                </div>
+                             </div>
+
+                             <!-- AUXILIARY READINGS (NEW SECTION) -->
+                             <div v-if="Object.keys(unitDetailModal.custom_sensor_values).length > 0" class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                                <div class="text-sm text-slate-400 uppercase font-bold mb-4">Auxiliary Readings</div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div v-for="(val, name) in unitDetailModal.custom_sensor_values" :key="name" class="text-center p-2 bg-slate-50 rounded border border-slate-100">
+                                        <div class="text-xs text-slate-500 font-bold uppercase truncate">{{ name }}</div>
+                                        <div class="text-xl font-bold text-slate-700">{{ val }}</div>
+                                    </div>
+                                </div>
+                             </div>
+
+                             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                                <div class="text-sm text-slate-400 uppercase font-bold mb-4">Status & Inputs</div>
+                                <div class="space-y-3">
+                                    <div class="flex justify-between items-center"><span class="font-bold text-slate-600">Occupancy</span><span class="px-2 py-1 rounded text-xs font-bold" :class="unitDetailModal.is_occupied ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'">{{ unitDetailModal.is_occupied ? 'OCCUPIED' : 'UNOCCUPIED' }}</span></div>
+                                    <div class="flex justify-between items-center" v-if="unitDetailModal.state.includes('ECONOMIZ')"><span class="font-bold text-slate-600">Economizer</span><span class="px-2 py-1 rounded text-xs font-bold bg-blue-100 text-blue-700">ACTIVE</span></div>
+                                    <div v-for="(v, k) in unitDetailModal.inputs" :key="k" class="flex justify-between items-center"><span class="font-bold text-slate-600 capitalize">{{ k.replace('_', ' ') }}</span><div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full" :class="v ? (k.includes('alarm')||k.includes('filter') ? 'bg-red-500' : 'bg-green-500') : 'bg-slate-200'"></span><span class="text-xs font-mono">{{ v ? 'ON' : 'OFF' }}</span></div></div>
+                                </div>
+                             </div>
+                        </div>
+                        
+                        <!-- Middle Column: Setpoints -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-fit">
+                            <div class="text-sm text-slate-400 uppercase font-bold mb-6 border-b pb-2">Active Setpoints</div>
+                            <div class="space-y-4">
+                                <template v-for="(val, key) in unitDetailModal.setpoints" :key="key">
+                                    <div class="flex justify-between items-center" v-if="isAdmin || ['occ_cool', 'occ_heat', 'unocc_cool', 'unocc_heat'].includes(key)">
+                                        <label class="font-bold text-slate-600 text-sm capitalize">{{ key.replace('_', ' ') }}</label>
+                                        <smart-input :value="val" type="number" @update="updateSetpoint(unitDetailModal.id, key, $event)" class="w-24 text-right border-b-2 border-slate-200 focus:border-sky-500 outline-none py-1 font-mono text-slate-800"></smart-input>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                        
+                        <!-- Right Column: Manual Control -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-fit">
+                            <div class="text-sm text-slate-400 uppercase font-bold mb-6 border-b pb-2">Manual Control</div>
+                            <div v-if="!isAdmin" class="text-center text-slate-400 py-10">Login as Admin to Control</div>
+                            <div v-else class="space-y-6">
+                                <div v-for="(val, key) in unitDetailModal.outputs" :key="key">
+                                    <div class="flex justify-between items-center mb-2"><span class="font-bold text-slate-700 capitalize">{{ key.replace('_', ' ') }}</span><span class="text-xs font-mono px-2 py-0.5 rounded border transition-colors" :class="unitDetailModal.overrides[key] !== undefined ? 'bg-purple-100 text-purple-700 border-purple-200 font-bold' : 'bg-slate-100 text-slate-500 border-transparent'">{{ unitDetailModal.overrides[key] !== undefined ? 'MANUAL @ ' + 8 : 'AUTO' }} ({{ typeof val === 'number' ? Math.round(val) + '%' : (val ? 'ON' : 'OFF') }})</span></div>
+                                    <div class="flex items-center gap-2">
+                                        <button @click="override(unitDetailModal.id, key, null)" :class="unitDetailModal.overrides[key] === undefined ? 'bg-sky-100 text-sky-700 border-sky-200' : 'bg-white border-slate-200 text-slate-400'" class="px-3 py-1.5 rounded text-xs font-bold border transition">Auto</button>
+                                        <template v-if="typeof val === 'boolean' || unitDetailModal.overrides[key] === true || unitDetailModal.overrides[key] === false">
+                                            <div class="flex bg-slate-100 rounded p-1"><button @click="override(unitDetailModal.id, key, true)" :class="unitDetailModal.overrides[key] === true ? 'bg-green-500 text-white shadow-sm' : 'text-slate-400'" class="px-3 py-1 rounded text-xs font-bold transition">ON</button><button @click="override(unitDetailModal.id, key, false)" :class="unitDetailModal.overrides[key] === false ? 'bg-red-500 text-white shadow-sm' : 'text-slate-400'" class="px-3 py-1 rounded text-xs font-bold transition">OFF</button></div>
+                                        </template>
+                                        <template v-else>
+                                            <div class="flex-1 flex items-center gap-2 bg-slate-50 px-2 rounded border border-slate-200"><input type="range" min="0" max="100" :value="unitDetailModal.overrides[key] !== undefined ? unitDetailModal.overrides[key] : val" @input="override(unitDetailModal.id, key, parseFloat($event.target.value))" class="w-full accent-sky-500 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"></div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- NEW SECTION: Network Configuration (Admin Only) -->
+                    <div v-if="isAdmin" class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mt-8">
+                        <div class="text-sm text-slate-400 uppercase font-bold mb-4 border-b pb-2">Network Configuration</div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Modbus Address</label>
+                                <smart-input :value="unitDetailModal.modbus_addr" type="number" @update="updateNet(unitDetailModal.id, 'modbus_addr', parseInt($event))" class="w-full border p-2 rounded"></smart-input>
+                            </div>
+                            <div class="flex gap-4">
+                                <div class="flex-1">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Temp Register</label>
+                                    <smart-input :value="unitDetailModal.modbus_reg_temp" type="number" @update="updateNet(unitDetailModal.id, 'modbus_reg_temp', parseInt($event))" class="w-full border p-2 rounded"></smart-input>
+                                </div>
+                                <div class="flex-1">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Temp Offset</label>
+                                    <smart-input :value="unitDetailModal.temp_offset" type="number" step="0.1" @update="updateNet(unitDetailModal.id, 'temp_offset', parseFloat($event))" class="w-full border p-2 rounded"></smart-input>
+                                </div>
+                            </div>
+                            <div class="flex gap-4">
+                                <div class="flex-1">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">CO2 Register</label>
+                                    <smart-input :value="unitDetailModal.modbus_reg_co2" type="number" @update="updateNet(unitDetailModal.id, 'modbus_reg_co2', parseInt($event))" class="w-full border p-2 rounded"></smart-input>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-1">MQTT Topic</label>
+                                <smart-input :value="unitDetailModal.mqtt_topic" @update="updateNet(unitDetailModal.id, 'mqtt_topic', $event)" class="w-full border p-2 rounded"></smart-input>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-1">BACnet IP</label>
+                                <smart-input :value="unitDetailModal.bacnet_ip" @update="updateNet(unitDetailModal.id, 'bacnet_ip', $event)" class="w-full border p-2 rounded"></smart-input>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-1">BACnet Object</label>
+                                <smart-input :value="unitDetailModal.bacnet_obj" @update="updateNet(unitDetailModal.id, 'bacnet_obj', $event)" class="w-full border p-2 rounded"></smart-input>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showAlarmPanel" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[100]" @click.self="showAlarmPanel = false">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+                <div class="p-6 border-b border-slate-100 bg-red-50 flex justify-between items-center"><h3 class="font-bold text-xl text-red-800">Active Alarms</h3><button @click="showAlarmPanel = false" class="text-slate-400 hover:text-red-500 font-bold text-2xl">&times;</button></div>
+                <div class="flex-1 overflow-y-auto p-6">
+                    <div v-if="activeAlarmCount === 0" class="text-center text-slate-400 py-12 flex flex-col items-center"><span class="text-4xl mb-2">👍</span><span>No Active Alarms</span></div>
+                    <div v-else class="space-y-3">
+                        <div v-for="unit in unitsWithAlarms" :key="unit.id">
+                            <div v-for="alarm in unit.alarms" :key="alarm.key" class="flex items-center justify-between p-4 bg-red-50 border border-red-100 rounded-lg shadow-sm">
+                                <div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full flex items-center justify-center font-bold" :class="alarm.acked ? 'bg-red-200 text-red-700' : 'bg-red-500 text-white animate-pulse'">!</div><div><div class="font-bold text-slate-800">{{ alarm.msg }}</div><div class="text-xs text-slate-500">{{ unit.name }}</div></div></div>
+                                <div><span v-if="alarm.acked" class="text-xs font-bold text-red-400 uppercase tracking-wider">Acknowledged</span><button v-else @click="ackAlarm(unit.id, alarm.key)" class="bg-white border border-red-200 text-red-600 px-3 py-1 rounded text-xs font-bold hover:bg-red-50">Acknowledge</button></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showSettings" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[100]" @click.self="showSettings = false">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+                <div class="flex border-b border-slate-100">
+                    <button v-for="tab in ['global', 'site', 'users', 'holidays', 'platform', 'logs']" @click="activeTab = tab" :class="activeTab === tab ? 'border-b-2 border-sky-600 text-sky-700 bg-sky-50' : 'text-slate-500 hover:bg-slate-50'" class="px-6 py-4 font-bold text-sm transition capitalize flex-1">{{ tab }}</button>
+                    <button @click="showSettings = false" class="px-6 py-4 text-slate-400 hover:text-red-500 font-bold text-xl border-l border-slate-100">&times;</button>
+                </div>
+                <div class="p-8 overflow-y-auto bg-slate-50/30 flex-1">
+                    <div v-if="activeTab === 'global'" class="space-y-6">
+                        <div class="p-4 border border-red-100 bg-red-50 rounded-lg flex justify-between"><span class="font-bold text-red-700">Emergency Stop</span><input type="checkbox" v-model="status.global_settings.emergency_stop" @change="saveGlobalSettings"></div>
+                        <div class="p-4 border border-blue-100 bg-blue-50 rounded-lg flex justify-between"><span class="text-blue-700">Boiler Lockout Temp (&deg;F)</span><smart-input :value="status.global_settings.boiler_lockout_temp" type="number" @update="status.global_settings.boiler_lockout_temp = parseFloat($event); saveGlobalSettings()" class="w-20 text-center"></smart-input></div>
+                        
+                        <!-- NEW: Operating Mode Switch -->
+                        <div class="p-4 border border-purple-200 bg-purple-50 rounded-lg">
+                            <h4 class="font-bold text-purple-900 mb-2 uppercase text-xs">Operating Mode</h4>
+                            <div class="flex gap-2">
+                                <button @click="status.global_settings.system_mode = 'LIVE'; saveGlobalSettings()" 
+                                    class="flex-1 py-2 rounded font-bold text-sm border transition"
+                                    :class="status.global_settings.system_mode === 'LIVE' ? 'bg-green-600 text-white border-green-700' : 'bg-white text-slate-500 border-slate-200'">
+                                    🟢 LIVE
+                                </button>
+                                <button @click="status.global_settings.system_mode = 'DEMO'; saveGlobalSettings()" 
+                                    class="flex-1 py-2 rounded font-bold text-sm border transition"
+                                    :class="status.global_settings.system_mode === 'DEMO' ? 'bg-sky-600 text-white border-sky-700' : 'bg-white text-slate-500 border-slate-200'">
+                                    🧪 DEMO
+                                </button>
+                                <button @click="status.global_settings.system_mode = 'INSTALL'; saveGlobalSettings()" 
+                                    class="flex-1 py-2 rounded font-bold text-sm border transition"
+                                    :class="status.global_settings.system_mode === 'INSTALL' ? 'bg-yellow-500 text-white border-yellow-600' : 'bg-white text-slate-500 border-slate-200'">
+                                    🚧 INSTALL
+                                </button>
+                            </div>
+                            <p class="text-[10px] text-purple-600 mt-2">
+                                <span v-if="status.global_settings.system_mode === 'LIVE'">Normal Operation. Safety Interlocks Active.</span>
+                                <span v-if="status.global_settings.system_mode === 'DEMO'">Physics Simulation. Sensors Ignored.</span>
+                                <span v-if="status.global_settings.system_mode === 'INSTALL'">Outputs Disabled. No Alarms. Setup Mode.</span>
+                            </p>
+                        </div>
+                        
+                        <!-- NEW: Backup Config -->
+                        <div class="p-4 border border-slate-200 bg-white rounded-lg flex justify-between items-center">
+                            <span class="font-bold text-slate-700">System Configuration</span>
+                            <a href="/api/system/download_config" target="_blank" class="bg-slate-700 text-white px-4 py-2 rounded text-sm font-bold hover:bg-slate-800">Download Backup (JSON)</a>
+                        </div>
+                    </div>
+                    
+                    <!-- NEW: Platform Tab -->
+                    <div v-if="activeTab === 'platform'" class="space-y-6">
+                        <h4 class="font-bold text-slate-700">Host Platform Diagnostics</h4>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-white p-4 rounded border">
+                                <div class="text-xs text-slate-400 font-bold uppercase">Hostname</div>
+                                <div class="font-mono text-lg" v-if="platformStats">{{ platformStats.hostname }}</div>
+                            </div>
+                            <div class="bg-white p-4 rounded border">
+                                <div class="text-xs text-slate-400 font-bold uppercase">Operating System</div>
+                                <div class="font-mono text-lg" v-if="platformStats">{{ platformStats.os }}</div>
+                            </div>
+                            <div class="bg-white p-4 rounded border">
+                                <div class="text-xs text-slate-400 font-bold uppercase">System Uptime</div>
+                                <div class="font-mono text-lg text-green-600" v-if="platformStats">{{ platformStats.uptime }}</div>
+                            </div>
+                            <div class="bg-white p-4 rounded border">
+                                <div class="text-xs text-slate-400 font-bold uppercase">Server Time</div>
+                                <div class="font-mono text-lg" v-if="platformStats">{{ platformStats.server_time }}</div>
+                            </div>
+                            <div class="bg-white p-4 rounded border">
+                                <div class="text-xs text-slate-400 font-bold uppercase">CPU Load (Sim)</div>
+                                <div class="w-full bg-slate-200 rounded-full h-2.5 mt-2">
+                                    <div class="bg-blue-600 h-2.5 rounded-full" :style="{width: platformStats?.cpu_sim}"></div>
+                                </div>
+                                <div class="text-right text-xs mt-1" v-if="platformStats">{{ platformStats.cpu_sim }}</div>
+                            </div>
+                            <div class="bg-white p-4 rounded border">
+                                <div class="text-xs text-slate-400 font-bold uppercase">Memory Usage (Sim)</div>
+                                <div class="w-full bg-slate-200 rounded-full h-2.5 mt-2">
+                                    <div class="bg-purple-600 h-2.5 rounded-full" :style="{width: platformStats?.memory_sim}"></div>
+                                </div>
+                                <div class="text-right text-xs mt-1" v-if="platformStats">{{ platformStats.memory_sim }}</div>
+                            </div>
+                        </div>
+                        <div class="pt-4 border-t">
+                             <button @click="reloadConfig" class="bg-red-100 text-red-700 border border-red-200 px-4 py-2 rounded font-bold text-sm hover:bg-red-200">Reboot Station (Reload Config)</button>
+                        </div>
+                    </div>
+
+                    <div v-if="activeTab === 'holidays'" class="space-y-4">
+                        <h4 class="font-bold text-slate-700">Schedule Exceptions</h4>
+                        <div v-for="(name, date) in status.global_settings.holidays" :key="date" class="flex justify-between items-center p-3 bg-white rounded shadow-sm"><div><div class="font-bold">{{ date }}</div><div class="text-xs text-slate-500">{{ name }}</div></div><button @click="deleteHoliday(date)" class="text-red-500 font-bold">Delete</button></div>
+                        <div class="flex gap-2 mt-4"><input type="date" v-model="newHoliday.date" class="border p-2 rounded"><input type="text" v-model="newHoliday.name" placeholder="Holiday Name" class="border p-2 rounded flex-1"><button @click="addHoliday" class="bg-sky-600 text-white px-4 rounded font-bold">Add</button></div>
+                    </div>
+                    
+                    <div v-if="activeTab === 'logs'" class="h-full flex flex-col">
+                        <div class="flex justify-between items-center mb-2">
+                            <h4 class="font-bold text-slate-700">Station Console</h4>
+                            <button @click="fetchLogs" class="text-xs bg-slate-200 px-2 py-1 rounded hover:bg-slate-300">Refresh</button>
+                        </div>
+                        <div class="flex-1 bg-gray-900 rounded p-4 overflow-y-auto font-mono text-xs text-green-400 border border-gray-700 shadow-inner">
+                             <div v-for="(l, i) in systemLogs" :key="i" class="mb-1 border-b border-gray-800 pb-1">
+                                <span class="text-gray-500">[{{ new Date(l.ts*1000).toLocaleTimeString() }}]</span>
+                                <span class="font-bold mx-2" :class="{'text-red-400': l.type==='ALARM', 'text-blue-400': l.type==='ACK', 'text-purple-400': l.type==='AUDIT'}">{{ l.type }}</span>
+                                <span class="text-yellow-200 mr-2">{{ l.unit }}</span>
+                                <span class="text-gray-300">{{ l.msg }}</span>
+                             </div>
+                        </div>
+                    </div>
+
+                    <div v-if="activeTab === 'site'" class="space-y-4">
+                        <!-- ADDED SITE IMAGE UPLOAD HERE -->
+                        <div class="p-4 border border-blue-100 bg-blue-50 rounded-lg mb-4">
+                            <label class="block text-xs font-bold text-blue-700 uppercase mb-2">Background Image</label>
+                            <input type="file" @change="uploadImage" class="text-sm">
+                        </div>
+                        
+                        <div><label class="block text-xs font-bold text-slate-400 uppercase mb-1">Building Name</label><smart-input :value="status.site.name" @update="status.site.name = $event" class="w-full border p-2 rounded"></smart-input></div>
+                        <div><label class="block text-xs font-bold text-slate-400 uppercase mb-1">Address</label><smart-input :value="status.site.address" @update="status.site.address = $event" class="w-full border p-2 rounded"></smart-input></div>
+                        <div><label class="block text-xs font-bold text-slate-400 uppercase mb-1">Phone</label><smart-input :value="status.site.phone" @update="status.site.phone = $event" class="w-full border p-2 rounded"></smart-input></div>
+                        <button @click="saveSiteInfo" class="bg-sky-600 text-white px-4 py-2 rounded font-bold hover:bg-sky-700">Save Site Info</button>
+                    </div>
+                    <div v-if="activeTab === 'users'" class="space-y-6">
+                        <div class="bg-white border rounded-lg overflow-hidden">
+                            <table class="w-full text-sm text-left"><thead class="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th class="px-4 py-3">Username</th><th class="px-4 py-3">Role</th><th class="px-4 py-3 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-100"><tr v-for="u in status.users" :key="u.username"><td class="px-4 py-3 font-bold">{{ u.username }}</td><td class="px-4 py-3"><span class="px-2 py-1 rounded text-xs uppercase font-bold" :class="u.role==='admin'?'bg-purple-100 text-purple-700':'bg-slate-100 text-slate-600'">{{ u.role }}</span></td><td class="px-4 py-3 text-right"><button v-if="u.username !== 'admin'" @click="deleteUser(u.username)" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button></td></tr></tbody></table>
+                        </div>
+                        <div class="p-4 bg-slate-100 rounded-lg"><h4 class="font-bold text-slate-600 mb-3">Add User</h4><div class="flex gap-2"><input v-model="newUser.username" placeholder="Username" class="border p-2 rounded text-sm flex-1"><input v-model="newUser.password" placeholder="Password" class="border p-2 rounded text-sm flex-1"><select v-model="newUser.role" class="border p-2 rounded text-sm"><option value="operator">Operator</option><option value="admin">Admin</option></select><button @click="addUser" class="bg-green-600 text-white px-4 rounded font-bold hover:bg-green-700">Add</button></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Graph Modal -->
+        <div v-if="historyModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[200]" @click.self="closeHistory()">
+            <div class="bg-white p-0 rounded-2xl shadow-2xl w-full max-w-4xl h-[600px] flex flex-col overflow-hidden">
+                <div class="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50/50">
+                    <div><h3 class="font-bold text-xl text-slate-800">PID Tuning Graph</h3><p class="text-sm text-slate-500">Setpoint vs Temp vs Output</p></div>
+                    <div class="flex gap-4">
+                        <a :href="'/api/history/' + historyModal + '/export'" target="_blank" class="text-sm bg-white border border-slate-300 text-slate-600 px-3 py-1 rounded hover:bg-slate-50 font-bold flex items-center gap-1">📥 Export CSV</a>
+                        <button @click="closeHistory()" class="text-slate-400 hover:text-red-500 transition text-2xl leading-none">&times;</button>
+                    </div>
+                </div>
+                <div class="flex-1 p-6 relative"><canvas id="chartCanvas"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        const SmartInput = {
+            props: ['value'], template: `<input :value="displayValue" @input="onInput" @blur="onBlur" @keyup.enter="onBlur" v-bind="$attrs" :class="[isDirty ? 'bg-yellow-50 border-yellow-300' : '', $attrs.class]" >`,
+            data() { return { displayValue: this.value, isDirty: false } },
+            watch: { value(newVal) { if (!this.isDirty) this.displayValue = newVal; } },
+            methods: { onInput(e) { this.displayValue = e.target.value; this.isDirty = true; }, onBlur() { if(this.isDirty) { this.$emit('update', this.displayValue); this.isDirty = false; } } }
+        };
+
+        createApp({
+            components: { 'smart-input': SmartInput },
+            data() {
+                return {
+                    status: { authenticated: false, outdoor: 0, global_occupied: true, occupancy_override: null, site: {}, global_settings: {holidays:{}}, units: [], schedules: [], users: [] },
+                    loginForm: { username: '', password: '' }, newUser: { username: '', password: '', role: 'operator' }, newHoliday: { date: '', name: '' }, newUnit: { name: "", type: "RTU", modbus_addr: 0, secondary_sensor: null, mqtt_topic: "", bacnet_ip: "", bacnet_obj: "" }, newPoint: { name: '', type: 'sensor', val: 0 },
+                    loginError: '', historyModal: null, unitDetailModal: null, showScheduleEditor: false, showAddUnit: false, showSettings: false, showAlarmPanel: false, activeTab: 'global', showPins: {}, selectedSchedule: null, chart: null, interval: null,
+                    viewMode: 'dashboard', isEditingGraphics: false, draggingUnit: null, systemLogs: [], showInfoPanel: false, showPinConfig: false, alarmTab: 'active', platformStats: null
+                }
+            },
+            computed: {
+                unitsWithAlarms() { return this.status.units.filter(u => u.alarms && u.alarms.length > 0); },
+                activeAlarmCount() { return this.unitsWithAlarms.reduce((sum, u) => sum + u.alarms.filter(a => !a.acked).length, 0); },
+                isAdmin() { return this.status.role === 'admin'; }
+            },
+            watch: {
+                activeTab(newVal) { 
+                    if(newVal === 'logs') this.fetchLogs();
+                    if(newVal === 'platform') this.fetchPlatform();
+                },
+                alarmTab(newVal) { if(newVal === 'history') this.fetchLogs(); }
+            },
+            methods: {
+                async fetchStatus() {
+                    try {
+                        const res = await fetch('/api/status');
+                        const incoming = await res.json();
+                        if (this.showSettings || this.isEditingGraphics || this.unitDetailModal) { 
+                            this.status.outdoor = incoming.outdoor; 
+                            this.status.units.forEach(u => {
+                                const newU = incoming.units.find(n => n.id === u.id);
+                                if(newU) { 
+                                    // Merge all fields including new sensor config
+                                    Object.assign(u, newU); 
+                                    
+                                    if(this.unitDetailModal && this.unitDetailModal.id === u.id) {
+                                        // Update modal live values
+                                        Object.assign(this.unitDetailModal, newU);
+                                    }
+                                }
+                            }); 
+                            this.status.authenticated = incoming.authenticated; 
+                            this.status.global_occupied = incoming.global_occupied;
+                            this.status.occupancy_override = incoming.occupancy_override;
+                            
+                            // FORCE USER LIST REFRESH IN SETTINGS
+                            if (this.activeTab === 'users' && incoming.users) {
+                                this.status.users = incoming.users;
+                            }
+                        } 
+                        else { this.status = incoming; }
+                    } catch(e) { console.error("Connection lost"); }
+                },
+                async fetchLogs() { const res = await fetch('/api/logs'); this.systemLogs = await res.json(); },
+                async fetchPlatform() { const res = await fetch('/api/platform'); this.platformStats = await res.json(); },
+                openDetail(unit) { this.unitDetailModal = unit; },
+                closeHistory() { if (this.chart) { this.chart.destroy(); this.chart = null; } this.historyModal = null; },
+                async doLogin() { try { const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.loginForm) }); if(!res.ok) throw new Error("Invalid Credentials"); await this.fetchStatus(); } catch(e) { this.loginError = e.message; } },
+                async doLogout() { await fetch('/api/logout', { method: 'POST' }); this.status.authenticated = false; this.loginForm = {username:'',password:''}; },
+                async saveGlobalSettings() { await fetch('/api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.status.global_settings) }); this.fetchStatus(); },
+                async addHoliday() { if(!this.newHoliday.date) return; this.status.global_settings.holidays[this.newHoliday.date] = this.newHoliday.name || "Holiday"; await this.saveGlobalSettings(); this.newHoliday = { date: '', name: '' }; },
+                async deleteHoliday(date) { delete this.status.global_settings.holidays[date]; await this.saveGlobalSettings(); },
+                async toggleUnit(id, state) { await fetch(`/api/unit/${id}/toggle?enable=${state}`, { method: 'POST' }); this.fetchStatus(); },
+                async setOccupancy(mode) { await fetch(`/api/system/occupancy`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode: mode}) }); this.fetchStatus(); },
+                async saveSiteInfo() { await fetch('/api/admin/site', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.status.site) }); alert("Site Info Saved"); this.fetchStatus(); },
+                async override(unitId, key, value) { await fetch(`/api/unit/${unitId}/override`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, value: value}) }); this.fetchStatus(); },
+                async updateSetpoint(id, key, val) { await fetch(`/api/unit/${id}/setpoint`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, value: parseFloat(val)}) }); this.fetchStatus(); },
+                async updatePin(unitId, key, pin) { const pinVal = pin === "" ? null : parseInt(pin); await fetch(`/api/unit/${unitId}/pin`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, pin: pinVal}) }); this.fetchStatus(); },
+                async updateNet(unitId, key, val) { const pl = {}; pl[key] = val; await fetch(`/api/unit/${unitId}/net`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pl) }); this.fetchStatus(); },
+                async assignSchedule(unitId, schedId) { await fetch(`/api/unit/${unitId}/schedule?schedule_id=${schedId}`, { method: 'POST' }); this.fetchStatus(); },
+                async createUnit() { if(!this.newUnit.name) return alert("Name is required"); await fetch('/api/units', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.newUnit) }); this.showAddUnit = false; this.newUnit = { name: "", type: "RTU", modbus_addr: 0, secondary_sensor: null, mqtt_topic: "", bacnet_ip: "", bacnet_obj: "" }; this.fetchStatus(); },
+                async deleteUnit(id) { if(!confirm("Are you sure you want to delete this unit?")) return; await fetch(`/api/units/${id}`, { method: 'DELETE' }); this.fetchStatus(); },
+                async addUser() { if(!this.newUser.username || !this.newUser.password) return; await fetch('/api/admin/users', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.newUser) }); this.newUser = { username: '', password: '', role: 'operator' }; this.fetchStatus(); },
+                async deleteUser(username) { if(!confirm(`Delete user ${username}?`)) return; await fetch(`/api/admin/users/${username}`, { method: 'DELETE' }); this.fetchStatus(); },
+                async ackAlarm(unitId, key) { await fetch(`/api/unit/${unitId}/ack`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({alarm_key: key}) }); this.fetchStatus(); },
+                async toggleAlarmConfig(unitId, enabled) { await fetch(`/api/unit/${unitId}/alarms/config`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: enabled}) }); this.fetchStatus(); },
+                
+                async addPoint() {
+                    if(!this.newPoint.name || !this.unitDetailModal) return;
+                    await fetch(`/api/unit/${this.unitDetailModal.id}/points`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({action: 'add', name: this.newPoint.name, type: this.newPoint.type, register: this.newPoint.type==='sensor'?this.newPoint.val:0, value: this.newPoint.type==='setpoint'?this.newPoint.val:0})
+                    });
+                    this.newPoint = { name: '', type: 'sensor', val: 0 };
+                    this.fetchStatus();
+                },
+                async managePoint(unitId, action, name, type) {
+                    if(action === 'delete' && !confirm("Delete this point?")) return;
+                    await fetch(`/api/unit/${unitId}/points`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({action: action, name: name, type: type})
+                    });
+                    this.fetchStatus();
+                },
+
+                togglePinEditor(id) { this.showPins[id] = !this.showPins[id]; },
+                createNewSchedule() { const newId = 'sch' + (Math.floor(Math.random() * 1000)); const days = {}; for(let i=0; i<7; i++) days[i] = { enabled: true, start: "09:00", end: "17:00" }; this.selectedSchedule = { id: newId, name: "New Schedule", days: days }; },
+                async saveSchedule() { if(!this.selectedSchedule) return; await fetch('/api/schedules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.selectedSchedule) }); this.fetchStatus(); alert("Schedule Saved!"); },
+                async reloadConfig() { if(!confirm('Reload configuration from disk?')) return; await fetch(`/api/system/reload`, { method: 'POST' }); this.fetchStatus(); },
+                
+                uploadImage(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (e) => { this.status.site.image = e.target.result; this.saveSiteInfo(); }; reader.readAsDataURL(file); },
+                uploadFloorplan(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (e) => { this.status.site.floorplan = e.target.result; this.saveSiteInfo(); }; reader.readAsDataURL(file); },
+                uploadUnitImage(e, id) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async (ev) => { await fetch(`/api/unit/${id}/image`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: ev.target.result}) }); this.fetchStatus(); }; reader.readAsDataURL(file); },
+                async clearUnitImage(id) { if(!confirm("Remove custom image and revert to default graphic?")) return; await fetch(`/api/unit/${id}/image`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: ""}) }); this.fetchStatus(); },
+                
+                startDrag(unit, event) { if (!this.isEditingGraphics) return; this.draggingUnit = unit; },
+                onDragMove(event) { if (!this.draggingUnit) return; const rect = event.currentTarget.getBoundingClientRect(); this.draggingUnit.x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)); this.draggingUnit.y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)); },
+                async onDragEnd() { if (this.draggingUnit) { await fetch(`/api/unit/${this.draggingUnit.id}/layout`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ x: this.draggingUnit.x, y: this.draggingUnit.y }) }); this.draggingUnit = null; } },
+                getStateColor(state) {
+                    if (state.includes('COOL')) return 'bg-sky-500';
+                    if (state.includes('HEAT')) return 'bg-orange-500';
+                    if (state === 'FAN ONLY') return 'bg-green-500';
+                    if (state.includes('FAIL') || state.includes('EMERGENCY')) return 'bg-red-600 animate-pulse';
+                    if (state.includes('DISABLED')) return 'bg-red-500';
+                    return 'bg-slate-300';
+                },
+                getDotColor(state) { return this.getStateColor(state); },
+                
+                renderUnitGraphic(unit) {
+                    const isFan = Boolean(unit.outputs.fan);
+                    const isCool = Boolean(unit.outputs.cool);
+                    const isHeat = Boolean(unit.outputs.heat);
+                    const damperPct = unit.outputs.damper || 0;
+                    
+                    // FIX: 0% = 0deg (Vertical/Closed), 100% = 90deg (Horizontal/Open)
+                    const damperAngle = (damperPct * 0.9); 
+                    
+                    const colorCool = isCool ? '#0ea5e9' : '#cbd5e1';
+                    const colorHeat = isHeat ? '#f97316' : '#cbd5e1';
+                    const colorFan  = isFan  ? '#22c55e' : '#64748b';
+                    const fanAnim = isFan ? 'animate-spin-fast' : '';
+                    const flowAnim = isFan ? 'flow-line' : 'opacity-0';
+                    const coolClass = isCool ? 'coil-active-cool' : '';
+                    const heatClass = isHeat ? 'coil-active-heat' : '';
+
+                    return `
+                    <svg viewBox="0 0 300 120" class="w-full h-full select-none">
+                        <rect x="10" y="10" width="280" height="100" rx="4" fill="#f8fafc" stroke="#475569" stroke-width="2"/>
+                        <g stroke="#94a3b8" stroke-width="2" fill="none" class="${flowAnim}">
+                            <path d="M 20 40 L 280 40" />
+                            <path d="M 20 60 L 280 60" />
+                            <path d="M 20 80 L 280 80" />
+                        </g>
+
+                        <!-- Return Air Sensor (Primary) - LEFT SIDE -->
+                        <g transform="translate(30, 60)">
+                            <circle cx="0" cy="0" r="3" fill="#334155" />
+                            <line x1="0" y1="0" x2="0" y2="-15" stroke="#334155" stroke-width="1"/>
+                            <text x="-5" y="-20" font-size="9" font-weight="bold" fill="#334155">RAT: ${unit.temp}°</text>
+                        </g>
+
+                        <g transform="translate(60, 20)">
+                            <text x="0" y="-5" font-size="8" fill="#64748b" font-weight="bold">OA: ${Math.round(damperPct)}%</text>
+                            <rect x="0" y="0" width="15" height="80" fill="none" stroke="#64748b" stroke-width="1"/>
+                            <line x1="7.5" y1="10" x2="7.5" y2="25" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" />
+                            <line x1="7.5" y1="35" x2="7.5" y2="50" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" />
+                            <line x1="7.5" y1="60" x2="7.5" y2="75" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" />
+                        </g>
+                        <g transform="translate(90, 20)">
+                            <polyline points="0,0 10,10 0,20 10,30 0,40 10,50 0,60 10,70 0,80" fill="none" stroke="#94a3b8" stroke-width="2"/>
+                        </g>
+                        <g transform="translate(130, 25)" class="${coolClass}">
+                            <rect x="0" y="0" width="20" height="70" fill="none" stroke="${colorCool}" stroke-width="2" rx="2"/>
+                            <line x1="5" y1="5" x2="15" y2="5" stroke="${colorCool}" stroke-width="1" />
+                            <line x1="5" y1="15" x2="15" y2="15" stroke="${colorCool}" stroke-width="1" />
+                            <line x1="5" y1="25" x2="15" y2="25" stroke="${colorCool}" stroke-width="1" />
+                            <line x1="5" y1="35" x2="15" y2="35" stroke="${colorCool}" stroke-width="1" />
+                            <line x1="5" y1="45" x2="15" y2="45" stroke="${colorCool}" stroke-width="1" />
+                            <line x1="5" y1="55" x2="15" y2="55" stroke="${colorCool}" stroke-width="1" />
+                            <line x1="5" y1="65" x2="15" y2="65" stroke="${colorCool}" stroke-width="1" />
+                            <text x="5" y="-8" font-size="10">❄️</text>
+                        </g>
+                        <g transform="translate(170, 25)" class="${heatClass}">
+                            <rect x="0" y="0" width="20" height="70" fill="none" stroke="${colorHeat}" stroke-width="2" rx="2"/>
+                            <path d="M5 5 L15 15 M15 5 L5 15" stroke="${colorHeat}" stroke-width="1.5" />
+                            <path d="M5 25 L15 35 M15 25 L5 35" stroke="${colorHeat}" stroke-width="1.5" />
+                            <path d="M5 45 L15 55 M15 45 L5 55" stroke="${colorHeat}" stroke-width="1.5" />
+                            <path d="M5 65 L15 75 M15 65 L5 75" stroke="${colorHeat}" stroke-width="1.5" />
+                            <text x="5" y="-8" font-size="10">🔥</text>
+                        </g>
+                        <g transform="translate(220, 60)">
+                            <path d="M-25,25 Q-30,0 0,-30 Q30,-30 30,0 L30,25 Z" fill="none" stroke="#475569" stroke-width="2" />
+                            <line x1="-25" y1="25" x2="30" y2="25" stroke="#475569" stroke-width="2" />
+                            <g class="${fanAnim}" style="transform-origin: center; transform-box: fill-box;">
+                                <circle cx="0" cy="0" r="20" fill="none" stroke="${colorFan}" stroke-width="2" stroke-dasharray="2 4"/>
+                                <circle cx="0" cy="0" r="5" fill="${colorFan}" />
+                                <line x1="0" y1="-20" x2="0" y2="20" stroke="${colorFan}" stroke-width="2" />
+                                <line x1="-20" y1="0" x2="20" y2="0" stroke="${colorFan}" stroke-width="2" />
+                            </g>
+                        </g>
+
+                        <!-- Discharge Air Sensor - RIGHT SIDE -->
+                        <g transform="translate(270, 60)">
+                            <circle cx="0" cy="0" r="3" fill="#334155" />
+                            <line x1="0" y1="0" x2="0" y2="-15" stroke="#334155" stroke-width="1"/>
+                            <text x="-20" y="-20" font-size="9" font-weight="bold" fill="#334155">DAT: ${unit.dat_val || '--'}°</text>
+                        </g>
+                    </svg>
+                    `;
+                },
+                
+                async showHistory(id) {
+                    if (this.chart) { this.chart.destroy(); this.chart = null; }
+                    this.historyModal = id;
+                    try {
+                        const res = await fetch(`/api/history/${id}`);
+                        if (!res.ok) throw new Error("Failed to fetch");
+                        const data = await res.json();
+                        if (this.historyModal !== id) return;
+                        this.$nextTick(() => {
+                            const canvas = document.getElementById('chartCanvas');
+                            if (!canvas) return; 
+                            const ctx = canvas.getContext('2d');
+                            if(this.chart) this.chart.destroy();
+                            this.chart = new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: data.map(d => new Date(d.ts*1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})),
+                                    datasets: [
+                                        { label: 'Temp', data: data.map(d => d.temp), borderColor: '#0ea5e9', borderWidth: 2, yAxisID: 'y' },
+                                        { label: 'Setpoint', data: data.map(d => d.sp), borderColor: '#22c55e', borderWidth: 2, borderDash: [5, 5], yAxisID: 'y' },
+                                        { label: 'Output %', data: data.map(d => d.out), borderColor: '#f97316', borderWidth: 1, fill: true, backgroundColor: 'rgba(249, 115, 22, 0.1)', yAxisID: 'y1' }
+                                    ]
+                                },
+                                options: { responsive: true, maintainAspectRatio: false, scales: { y: { type: 'linear', display: true, position: 'left', grid: { color: '#f1f5f9' } }, y1: { type: 'linear', display: true, position: 'right', min: 0, max: 100, grid: { display: false } }, x: { grid: { display: false } } } } }
+                            );
+                        });
+                    } catch (e) { console.error("History load error", e); this.historyModal = null; }
+                }
+            },
+            mounted() { this.fetchStatus(); this.interval = setInterval(this.fetchStatus, 1000); },
+            beforeUnmount() { clearInterval(this.interval); }
+        }).mount('#app');
+    </script>
+</body>
+</html>
