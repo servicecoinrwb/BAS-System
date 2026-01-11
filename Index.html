@@ -44,12 +44,28 @@
         .terminal-logs { background-color: #1e1e1e; color: #4ade80; font-family: 'Courier New', Courier, monospace; }
         .terminal-logs tr:hover { background-color: #333; }
         .terminal-logs td { border-bottom: 1px solid #333; }
+
+        /* New Device Toast Animation */
+        .toast-enter-active, .toast-leave-active { transition: all 0.5s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-20px); }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
     <div id="app" class="container mx-auto p-4 max-w-6xl relative min-h-screen">
         <div v-if="status.site && status.site.image" class="site-bg" :style="{backgroundImage: 'url(' + status.site.image + ')'}"></div>
         
+        <transition name="toast">
+            <div v-if="newDeviceNotification" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-6 py-4 rounded-xl shadow-2xl z-[200] flex items-center gap-4 min-w-[300px] border-2 border-green-400">
+                <div class="text-3xl">📡</div>
+                <div>
+                    <h4 class="font-bold text-lg">New Zigbee Device Found!</h4>
+                    <div class="font-mono bg-green-800 px-2 py-1 rounded mt-1 select-all cursor-pointer" @click="copyId">{{ newDeviceNotification }}</div>
+                    <div class="text-[10px] mt-1 opacity-80">Click ID to copy</div>
+                </div>
+                <button @click="newDeviceNotification = null" class="ml-auto text-2xl hover:text-green-200">&times;</button>
+            </div>
+        </transition>
+
         <div v-if="!status.authenticated" class="fixed inset-0 bg-slate-900 flex items-center justify-center p-4 z-[100]">
             <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm text-center">
                 <h2 class="text-2xl font-bold mb-6 text-slate-800">System Login</h2>
@@ -95,16 +111,19 @@
                         <span v-if="activeAlarmCount > 0" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] px-1.5 rounded-full">{{ activeAlarmCount }}</span>
                     </button>
                 </div>
-                <div class="flex gap-2">
-                    <button @click="setOccupancy(!status.global_occupied)" :class="status.global_occupied ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-200 text-slate-600'" class="px-4 py-2 rounded-lg font-bold border transition flex items-center gap-2"><span class="text-lg">{{ status.global_occupied ? '🏢' : '🌙' }}</span> {{ status.global_occupied ? 'Occupied' : 'Unoccupied' }}</button>
-                    <button v-if="isAdmin" @click="showScheduleEditor = true" class="px-4 py-2 rounded-lg font-bold border bg-slate-50 hover:bg-slate-100 text-slate-600 transition">📅 Schedule</button>
-                    <button v-if="isAdmin" @click="showAddUnit = true" class="px-4 py-2 rounded-lg font-bold border bg-green-50 hover:bg-green-100 text-green-600 border-green-200 transition">➕ Add Unit</button>
+                <div class="flex gap-2 items-center bg-slate-100 p-1 rounded-lg">
+                    <button @click="setOccupancy('AUTO')" :class="status.occupancy_override === null ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1.5 rounded text-xs font-bold transition">AUTO</button>
+                    <button @click="setOccupancy('OCCUPIED')" :class="status.occupancy_override === true ? 'bg-green-500 text-white shadow' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1.5 rounded text-xs font-bold transition">OCC</button>
+                    <button @click="setOccupancy('UNOCCUPIED')" :class="status.occupancy_override === false ? 'bg-slate-600 text-white shadow' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1.5 rounded text-xs font-bold transition">UNOCC</button>
+                    
+                    <div class="h-6 w-px bg-slate-300 mx-2"></div>
+                    
+                    <button v-if="isAdmin" @click="showScheduleEditor = true" class="px-4 py-2 rounded-lg font-bold bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 transition text-sm">📅 Schedule</button>
+                    <button v-if="isAdmin" @click="showAddUnit = true" class="px-4 py-2 rounded-lg font-bold bg-green-500 hover:bg-green-600 text-white border border-green-600 transition text-sm">➕ Add Unit</button>
                 </div>
             </div>
 
-            <!-- Dashboard View -->
             <div v-if="viewMode === 'dashboard'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <!-- Unit Card Loop -->
                 <div v-for="u in status.units" :key="u.id" 
                     class="unit-card bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative flex flex-col group"
                     :class="[
@@ -168,7 +187,6 @@
                 </div>
             </div>
 
-            <!-- Points List View -->
             <div v-if="viewMode === 'points'" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <table class="w-full text-sm text-left">
                     <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
@@ -221,7 +239,6 @@
                 </table>
             </div>
 
-            <!-- Graphics View -->
             <div v-if="viewMode === 'graphics'">
                 <div class="mb-4 flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200">
                     <h3 class="font-bold text-lg text-slate-700">Floorplan Graphics</h3>
@@ -258,7 +275,6 @@
                 </div>
             </div>
 
-            <!-- Alarm Console View -->
             <div v-if="viewMode === 'alarms'" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[calc(100vh-200px)]">
                 <div class="flex border-b border-slate-100 bg-slate-50">
                     <button @click="alarmTab = 'active'" :class="alarmTab === 'active' ? 'border-b-2 border-red-500 text-red-700 bg-red-50' : 'text-slate-500 hover:bg-slate-100'" class="px-6 py-3 font-bold text-sm transition">Active Alarms ({{ activeAlarmCount }})</button>
@@ -341,8 +357,6 @@
 
         </div>
         
-        <!-- (Modals included in script below) -->
-        <!-- Add Unit Modal -->
         <div v-if="showAddUnit" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[150]" @click.self="showAddUnit = false">
              <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
                  <h2 class="text-xl font-bold mb-4">Add New RTU</h2>
@@ -378,7 +392,6 @@
              </div>
         </div>
 
-        <!-- Schedule Editor Modal -->
         <div v-if="showScheduleEditor" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[150]" @click.self="showScheduleEditor = false">
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden">
                 <div class="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -391,7 +404,6 @@
                 </div>
                 
                 <div class="flex h-full overflow-hidden">
-                    <!-- Sidebar List -->
                     <div class="w-1/4 border-r border-slate-100 overflow-y-auto bg-slate-50/50 p-2">
                          <div v-for="s in status.schedules" :key="s.id" 
                               @click="selectedSchedule = JSON.parse(JSON.stringify(s))"
@@ -402,7 +414,6 @@
                           </div>
                     </div>
 
-                    <!-- Editor Area -->
                     <div class="w-3/4 overflow-y-auto p-6" v-if="selectedSchedule">
                         <div class="mb-6">
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Schedule Name</label>
@@ -437,10 +448,8 @@
             </div>
         </div>
 
-        <!-- Unit Faceplate Modal -->
         <div v-if="unitDetailModal" class="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 backdrop-blur-sm z-[150]" @click.self="unitDetailModal = null">
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden relative">
-                <!-- Info Slide-over Panel -->
                 <div v-if="showInfoPanel" class="absolute inset-0 bg-white/95 z-50 p-8 overflow-y-auto backdrop-blur flex flex-col">
                     <div class="flex justify-between items-start mb-6 border-b pb-4">
                         <div>
@@ -531,14 +540,12 @@
                 </div>
                 
                 <div class="flex-1 overflow-y-auto p-8 bg-slate-50/50">
-                    <!-- HARDWARE PIN CONFIGURATION MODAL (Admin Only) -->
                     <div v-if="isAdmin && showPinConfig" class="bg-white p-6 rounded-xl shadow-sm border border-purple-200 mb-8 border-l-4 border-l-purple-500 space-y-6">
                         <div class="text-sm text-purple-600 uppercase font-bold border-b pb-2 flex justify-between">
                             <span>Configuration</span>
                             <button @click="showPinConfig = false" class="text-xs text-slate-400 hover:text-slate-600">Close</button>
                         </div>
                         
-                        <!-- 1. Hardware Pins -->
                         <div>
                              <h5 class="text-xs font-bold text-slate-400 uppercase mb-3">Modbus Coil/Input Indexes</h5>
                              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -546,7 +553,6 @@
                                     <label class="block text-xs font-bold text-slate-500 uppercase mb-1">{{ key }}</label>
                                     <smart-input :value="pin" type="number" @update="updatePin(unitDetailModal.id, key, $event)" class="w-full border p-2 rounded bg-purple-50 focus:bg-white transition"></smart-input>
                                 </div>
-                                <!-- Add buttons for common missing pins if they don't exist in map -->
                                 <div v-for="k in ['G','Y1','Y2','W1','DMP','fan_status','filter_status']" :key="k">
                                     <div v-if="unitDetailModal.pins[k] === undefined">
                                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">{{ k }} (Unassigned)</label>
@@ -556,11 +562,9 @@
                             </div>
                         </div>
 
-                        <!-- 2. Custom Points Manager -->
                         <div class="pt-4 border-t border-purple-100">
                              <h5 class="text-xs font-bold text-slate-400 uppercase mb-3">Points Database Manager</h5>
                              
-                             <!-- List Existing Custom Sensors -->
                              <div v-if="Object.keys(unitDetailModal.custom_sensors).length > 0" class="mb-4 space-y-2">
                                 <div v-for="(reg, name) in unitDetailModal.custom_sensors" :key="name" class="flex items-center justify-between bg-purple-50 p-2 rounded border border-purple-100">
                                     <span class="font-bold text-sm text-purple-800">{{ name }} <span class="text-xs font-mono text-purple-400">(Reg: {{ reg }})</span></span>
@@ -568,7 +572,6 @@
                                 </div>
                              </div>
 
-                             <!-- Add New Point Form -->
                              <div class="flex gap-4 items-end">
                                  <div class="flex-1">
                                      <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Point Name</label>
@@ -591,10 +594,8 @@
                     </div>
 
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-                        <!-- Left Column: Graphic & Main Readings -->
                         <div class="space-y-6">
                              <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden relative min-h-[200px] flex items-center justify-center bg-slate-100">
-                                 <!-- ALWAYS SHOW ANIMATED GRAPHIC HERE -->
                                  <div class="w-full h-full p-4" v-html="renderUnitGraphic(unitDetailModal)"></div>
                              </div>
                              <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 text-center">
@@ -620,7 +621,6 @@
                                 </div>
                              </div>
 
-                             <!-- AUXILIARY READINGS (NEW SECTION) -->
                              <div v-if="Object.keys(unitDetailModal.custom_sensor_values).length > 0" class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                                 <div class="text-sm text-slate-400 uppercase font-bold mb-4">Auxiliary Readings</div>
                                 <div class="grid grid-cols-2 gap-4">
@@ -641,7 +641,6 @@
                              </div>
                         </div>
                         
-                        <!-- Middle Column: Setpoints -->
                         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-fit">
                             <div class="text-sm text-slate-400 uppercase font-bold mb-6 border-b pb-2">Active Setpoints</div>
                             <div class="space-y-4">
@@ -654,7 +653,6 @@
                             </div>
                         </div>
                         
-                        <!-- Right Column: Manual Control -->
                         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-fit">
                             <div class="text-sm text-slate-400 uppercase font-bold mb-6 border-b pb-2">Manual Control</div>
                             <div v-if="!isAdmin" class="text-center text-slate-400 py-10">Login as Admin to Control</div>
@@ -675,7 +673,6 @@
                         </div>
                     </div>
                     
-                    <!-- NEW SECTION: Network Configuration (Admin Only) -->
                     <div v-if="isAdmin" class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mt-8">
                         <div class="text-sm text-slate-400 uppercase font-bold mb-4 border-b pb-2">Network Configuration</div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -745,7 +742,25 @@
                         <div class="p-4 border border-red-100 bg-red-50 rounded-lg flex justify-between"><span class="font-bold text-red-700">Emergency Stop</span><input type="checkbox" v-model="status.global_settings.emergency_stop" @change="saveGlobalSettings"></div>
                         <div class="p-4 border border-blue-100 bg-blue-50 rounded-lg flex justify-between"><span class="text-blue-700">Boiler Lockout Temp (&deg;F)</span><smart-input :value="status.global_settings.boiler_lockout_temp" type="number" @update="status.global_settings.boiler_lockout_temp = parseFloat($event); saveGlobalSettings()" class="w-20 text-center"></smart-input></div>
                         
-                        <!-- NEW: Operating Mode Switch -->
+                        <div class="p-4 border border-orange-200 bg-orange-50 rounded-lg">
+                            <h4 class="font-bold text-orange-900 mb-2 uppercase text-xs">Zigbee Network</h4>
+                            <div class="flex items-center justify-between">
+                                <div class="text-sm text-orange-800">
+                                    Allow new devices to join (Pairing Mode)
+                                </div>
+                                <button @click="toggleZigbeePairing" 
+                                        :class="zigbeePairingMode ? 'bg-red-500 animate-pulse' : 'bg-orange-500'"
+                                        class="text-white px-4 py-2 rounded font-bold text-sm transition shadow">
+                                    {{ zigbeePairingMode ? 'Stop Pairing' : 'Enable Pairing (2 mins)' }}
+                                </button>
+                            </div>
+                            <p class="text-[10px] text-orange-600 mt-2">
+                                1. Click Enable Pairing.<br>
+                                2. Hold the reset button on your Zigbee device.<br>
+                                3. Check "Station Console" logs for new device ID.
+                            </p>
+                        </div>
+
                         <div class="p-4 border border-purple-200 bg-purple-50 rounded-lg">
                             <h4 class="font-bold text-purple-900 mb-2 uppercase text-xs">Operating Mode</h4>
                             <div class="flex gap-2">
@@ -772,14 +787,12 @@
                             </p>
                         </div>
                         
-                        <!-- NEW: Backup Config -->
                         <div class="p-4 border border-slate-200 bg-white rounded-lg flex justify-between items-center">
                             <span class="font-bold text-slate-700">System Configuration</span>
                             <a href="/api/system/download_config" target="_blank" class="bg-slate-700 text-white px-4 py-2 rounded text-sm font-bold hover:bg-slate-800">Download Backup (JSON)</a>
                         </div>
                     </div>
                     
-                    <!-- NEW: Platform Tab -->
                     <div v-if="activeTab === 'platform'" class="space-y-6">
                         <h4 class="font-bold text-slate-700">Host Platform Diagnostics</h4>
                         <div class="grid grid-cols-2 gap-4">
@@ -841,6 +854,11 @@
                     </div>
 
                     <div v-if="activeTab === 'site'" class="space-y-4">
+                        <div class="p-4 border border-blue-100 bg-blue-50 rounded-lg mb-4">
+                            <label class="block text-xs font-bold text-blue-700 uppercase mb-2">Background Image</label>
+                            <input type="file" @change="uploadImage" class="text-sm">
+                        </div>
+                        
                         <div><label class="block text-xs font-bold text-slate-400 uppercase mb-1">Building Name</label><smart-input :value="status.site.name" @update="status.site.name = $event" class="w-full border p-2 rounded"></smart-input></div>
                         <div><label class="block text-xs font-bold text-slate-400 uppercase mb-1">Address</label><smart-input :value="status.site.address" @update="status.site.address = $event" class="w-full border p-2 rounded"></smart-input></div>
                         <div><label class="block text-xs font-bold text-slate-400 uppercase mb-1">Phone</label><smart-input :value="status.site.phone" @update="status.site.phone = $event" class="w-full border p-2 rounded"></smart-input></div>
@@ -871,266 +889,254 @@
     </div>
 
     <script>
-        const { createApp } = Vue;
-        const SmartInput = {
-            props: ['value'], template: `<input :value="displayValue" @input="onInput" @blur="onBlur" @keyup.enter="onBlur" v-bind="$attrs" :class="[isDirty ? 'bg-yellow-50 border-yellow-300' : '', $attrs.class]" >`,
-            data() { return { displayValue: this.value, isDirty: false } },
-            watch: { value(newVal) { if (!this.isDirty) this.displayValue = newVal; } },
-            methods: { onInput(e) { this.displayValue = e.target.value; this.isDirty = true; }, onBlur() { if(this.isDirty) { this.$emit('update', this.displayValue); this.isDirty = false; } } }
-        };
+    const { createApp } = Vue;
+    const SmartInput = {
+        props: ['value'], template: `<input :value="displayValue" @input="onInput" @blur="onBlur" @keyup.enter="onBlur" v-bind="$attrs" :class="[isDirty ? 'bg-yellow-50 border-yellow-300' : '', $attrs.class]" >`,
+        data() { return { displayValue: this.value, isDirty: false } },
+        watch: { value(newVal) { if (!this.isDirty) this.displayValue = newVal; } },
+        methods: { onInput(e) { this.displayValue = e.target.value; this.isDirty = true; }, onBlur() { if(this.isDirty) { this.$emit('update', this.displayValue); this.isDirty = false; } } }
+    };
 
-        createApp({
-            components: { 'smart-input': SmartInput },
-            data() {
-                return {
-                    status: { authenticated: false, outdoor: 0, global_occupied: true, site: {}, global_settings: {holidays:{}}, units: [], schedules: [], users: [] },
-                    loginForm: { username: '', password: '' }, newUser: { username: '', password: '', role: 'operator' }, newHoliday: { date: '', name: '' }, newUnit: { name: "", type: "RTU", modbus_addr: 0, secondary_sensor: null, mqtt_topic: "", bacnet_ip: "", bacnet_obj: "" }, newPoint: { name: '', type: 'sensor', val: 0 },
-                    loginError: '', historyModal: null, unitDetailModal: null, showScheduleEditor: false, showAddUnit: false, showSettings: false, showAlarmPanel: false, activeTab: 'global', showPins: {}, selectedSchedule: null, chart: null, interval: null,
-                    viewMode: 'dashboard', isEditingGraphics: false, draggingUnit: null, systemLogs: [], showInfoPanel: false, showPinConfig: false, alarmTab: 'active', platformStats: null
-                }
+    createApp({
+        components: { 'smart-input': SmartInput },
+        data() {
+            return {
+                status: { authenticated: false, outdoor: 0, global_occupied: true, occupancy_override: null, site: {}, global_settings: {holidays:{}}, units: [], schedules: [], users: [] },
+                loginForm: { username: '', password: '' }, 
+                newUser: { username: '', password: '', role: 'operator' }, 
+                newHoliday: { date: '', name: '' }, 
+                newUnit: { name: "", type: "RTU", modbus_addr: 0, secondary_sensor: null, mqtt_topic: "", bacnet_ip: "", bacnet_obj: "" }, 
+                newPoint: { name: '', type: 'sensor', val: 0 },
+                loginError: '', 
+                historyModal: null, 
+                unitDetailModal: null, 
+                showScheduleEditor: false, 
+                showAddUnit: false, 
+                showSettings: false, 
+                showAlarmPanel: false, 
+                activeTab: 'global', 
+                showPins: {}, 
+                selectedSchedule: null, 
+                chart: null, 
+                interval: null,
+                viewMode: 'dashboard', 
+                isEditingGraphics: false, 
+                draggingUnit: null, 
+                systemLogs: [], 
+                showInfoPanel: false, 
+                showPinConfig: false, 
+                alarmTab: 'active', 
+                platformStats: null,
+                zigbeePairingMode: false,
+                newDeviceNotification: null // ADDED THIS
+            }
+        },
+        computed: {
+            unitsWithAlarms() { return this.status.units.filter(u => u.alarms && u.alarms.length > 0); },
+            activeAlarmCount() { return this.unitsWithAlarms.reduce((sum, u) => sum + u.alarms.filter(a => !a.acked).length, 0); },
+            isAdmin() { return this.status.role === 'admin'; }
+        },
+        watch: {
+            activeTab(newVal) { 
+                if(newVal === 'logs') this.fetchLogs();
+                if(newVal === 'platform') this.fetchPlatform();
             },
-            computed: {
-                unitsWithAlarms() { return this.status.units.filter(u => u.alarms && u.alarms.length > 0); },
-                activeAlarmCount() { return this.unitsWithAlarms.reduce((sum, u) => sum + u.alarms.filter(a => !a.acked).length, 0); },
-                isAdmin() { return this.status.role === 'admin'; }
-            },
-            watch: {
-                activeTab(newVal) { 
-                    if(newVal === 'logs') this.fetchLogs();
-                    if(newVal === 'platform') this.fetchPlatform();
-                },
-                alarmTab(newVal) { if(newVal === 'history') this.fetchLogs(); }
-            },
-            methods: {
-                async fetchStatus() {
-                    try {
-                        const res = await fetch('/api/status');
-                        const incoming = await res.json();
-                        if (this.showSettings || this.isEditingGraphics || this.unitDetailModal) { 
-                            this.status.outdoor = incoming.outdoor; 
-                            this.status.units.forEach(u => {
-                                const newU = incoming.units.find(n => n.id === u.id);
-                                if(newU) { 
-                                    u.temp = newU.temp; u.state = newU.state; u.outputs = newU.outputs; u.dat_val = newU.dat_val; u.inputs = newU.inputs; u.alarms = newU.alarms; u.alarms_enabled = newU.alarms_enabled;
-                                    u.secondary_val = newU.secondary_val; u.secondary_type = newU.secondary_type;
-                                    u.image = newU.image; // Update Image
-                                    if(this.unitDetailModal && this.unitDetailModal.id === u.id) {
-                                        this.unitDetailModal.temp = newU.temp;
-                                        this.unitDetailModal.dat_val = newU.dat_val;
-                                        this.unitDetailModal.inputs = newU.inputs;
-                                        this.unitDetailModal.alarms = newU.alarms;
-                                        this.unitDetailModal.alarms_enabled = newU.alarms_enabled;
-                                        this.unitDetailModal.secondary_val = newU.secondary_val;
-                                        this.unitDetailModal.secondary_type = newU.secondary_type;
-                                        this.unitDetailModal.state = newU.state;
-                                        this.unitDetailModal.outputs = newU.outputs;
-                                        this.unitDetailModal.image = newU.image;
-                                        this.unitDetailModal.modbus_addr = newU.modbus_addr;
-                                        this.unitDetailModal.mqtt_topic = newU.mqtt_topic;
-                                        this.unitDetailModal.bacnet_ip = newU.bacnet_ip;
-                                        this.unitDetailModal.bacnet_obj = newU.bacnet_obj;
-                                        this.unitDetailModal.pins = newU.pins;
-                                        this.unitDetailModal.modbus_reg_temp = newU.modbus_reg_temp;
-                                        this.unitDetailModal.modbus_reg_co2 = newU.modbus_reg_co2;
-                                        this.unitDetailModal.temp_offset = newU.temp_offset;
-                                        this.unitDetailModal.is_simulating = newU.is_simulating;
-                                        this.unitDetailModal.custom_sensors = newU.custom_sensors;
-                                        this.unitDetailModal.custom_sensor_values = newU.custom_sensor_values;
-                                    }
+            alarmTab(newVal) { if(newVal === 'history') this.fetchLogs(); }
+        },
+        methods: {
+            async fetchStatus() {
+                try {
+                    const res = await fetch('/api/status');
+                    const incoming = await res.json();
+                    
+                    // --- NEW LOGIC TO CHECK FOR ZIGBEE JOIN EVENTS ---
+                    // We check if the backend sent a 'new_device' field in the status
+                    if (incoming.new_device) {
+                        this.newDeviceNotification = incoming.new_device;
+                        // Auto-hide after 15 seconds
+                        setTimeout(() => { this.newDeviceNotification = null; }, 15000);
+                    }
+                    // -------------------------------------------------
+
+                    if (this.showSettings || this.isEditingGraphics || this.unitDetailModal) { 
+                        this.status.outdoor = incoming.outdoor; 
+                        this.status.units.forEach(u => {
+                            const newU = incoming.units.find(n => n.id === u.id);
+                            if(newU) { 
+                                u.temp = newU.temp; u.state = newU.state; u.outputs = newU.outputs; u.dat_val = newU.dat_val; u.inputs = newU.inputs; u.alarms = newU.alarms; u.alarms_enabled = newU.alarms_enabled;
+                                u.secondary_val = newU.secondary_val; u.secondary_type = newU.secondary_type;
+                                u.image = newU.image; 
+                                if(this.unitDetailModal && this.unitDetailModal.id === u.id) {
+                                    Object.assign(this.unitDetailModal, newU);
                                 }
-                            }); 
-                            this.status.authenticated = incoming.authenticated; 
-                            
-                            // FORCE USER LIST REFRESH IN SETTINGS
-                            if (this.activeTab === 'users' && incoming.users) {
-                                this.status.users = incoming.users;
                             }
-                        } 
-                        else { this.status = incoming; }
-                    } catch(e) { console.error("Connection lost"); }
-                },
-                async fetchLogs() { const res = await fetch('/api/logs'); this.systemLogs = await res.json(); },
-                async fetchPlatform() { const res = await fetch('/api/platform'); this.platformStats = await res.json(); },
-                openDetail(unit) { this.unitDetailModal = unit; },
-                closeHistory() { if (this.chart) { this.chart.destroy(); this.chart = null; } this.historyModal = null; },
-                async doLogin() { try { const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.loginForm) }); if(!res.ok) throw new Error("Invalid Credentials"); await this.fetchStatus(); } catch(e) { this.loginError = e.message; } },
-                async doLogout() { await fetch('/api/logout', { method: 'POST' }); this.status.authenticated = false; this.loginForm = {username:'',password:''}; },
-                async saveGlobalSettings() { await fetch('/api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.status.global_settings) }); this.fetchStatus(); },
-                async addHoliday() { if(!this.newHoliday.date) return; this.status.global_settings.holidays[this.newHoliday.date] = this.newHoliday.name || "Holiday"; await this.saveGlobalSettings(); this.newHoliday = { date: '', name: '' }; },
-                async deleteHoliday(date) { delete this.status.global_settings.holidays[date]; await this.saveGlobalSettings(); },
-                async toggleUnit(id, state) { await fetch(`/api/unit/${id}/toggle?enable=${state}`, { method: 'POST' }); this.fetchStatus(); },
-                async setOccupancy(state) { await fetch(`/api/system/occupancy?occupied=${state}`, { method: 'POST' }); this.fetchStatus(); },
-                async saveSiteInfo() { await fetch('/api/admin/site', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.status.site) }); alert("Site Info Saved"); this.fetchStatus(); },
-                async override(unitId, key, value) { await fetch(`/api/unit/${unitId}/override`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, value: value}) }); this.fetchStatus(); },
-                async updateSetpoint(id, key, val) { await fetch(`/api/unit/${id}/setpoint`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, value: parseFloat(val)}) }); this.fetchStatus(); },
-                async updatePin(unitId, key, pin) { const pinVal = pin === "" ? null : parseInt(pin); await fetch(`/api/unit/${unitId}/pin`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, pin: pinVal}) }); this.fetchStatus(); },
-                async updateNet(unitId, key, val) { const pl = {}; pl[key] = val; await fetch(`/api/unit/${unitId}/net`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pl) }); this.fetchStatus(); },
-                async assignSchedule(unitId, schedId) { await fetch(`/api/unit/${unitId}/schedule?schedule_id=${schedId}`, { method: 'POST' }); this.fetchStatus(); },
-                async createUnit() { if(!this.newUnit.name) return alert("Name is required"); await fetch('/api/units', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.newUnit) }); this.showAddUnit = false; this.newUnit = { name: "", type: "RTU", modbus_addr: 0, secondary_sensor: null, mqtt_topic: "", bacnet_ip: "", bacnet_obj: "" }; this.fetchStatus(); },
-                async deleteUnit(id) { if(!confirm("Are you sure you want to delete this unit?")) return; await fetch(`/api/units/${id}`, { method: 'DELETE' }); this.fetchStatus(); },
-                async addUser() { if(!this.newUser.username || !this.newUser.password) return; await fetch('/api/admin/users', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.newUser) }); this.newUser = { username: '', password: '', role: 'operator' }; this.fetchStatus(); },
-                async deleteUser(username) { if(!confirm(`Delete user ${username}?`)) return; await fetch(`/api/admin/users/${username}`, { method: 'DELETE' }); this.fetchStatus(); },
-                async ackAlarm(unitId, key) { await fetch(`/api/unit/${unitId}/ack`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({alarm_key: key}) }); this.fetchStatus(); },
-                async toggleAlarmConfig(unitId, enabled) { await fetch(`/api/unit/${unitId}/alarms/config`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: enabled}) }); this.fetchStatus(); },
-                
-                async addPoint() {
-                    if(!this.newPoint.name || !this.unitDetailModal) return;
-                    await fetch(`/api/unit/${this.unitDetailModal.id}/points`, {
+                        }); 
+                        this.status.authenticated = incoming.authenticated; 
+                        this.status.global_occupied = incoming.global_occupied;
+                        this.status.occupancy_override = incoming.occupancy_override;
+                        
+                        if (this.activeTab === 'users' && incoming.users) {
+                            this.status.users = incoming.users;
+                        }
+                    } 
+                    else { this.status = incoming; }
+                } catch(e) { console.error("Connection lost"); }
+            },
+            
+            async toggleZigbeePairing() {
+                this.zigbeePairingMode = !this.zigbeePairingMode;
+                try {
+                    await fetch('/api/zigbee/permit_join', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({action: 'add', name: this.newPoint.name, type: this.newPoint.type, register: this.newPoint.type==='sensor'?this.newPoint.val:0, value: this.newPoint.type==='setpoint'?this.newPoint.val:0})
+                        body: JSON.stringify({ enabled: this.zigbeePairingMode, time: 120 })
                     });
-                    this.newPoint = { name: '', type: 'sensor', val: 0 };
-                    this.fetchStatus();
-                },
-                async managePoint(unitId, action, name, type) {
-                    if(action === 'delete' && !confirm("Delete this point?")) return;
-                    await fetch(`/api/unit/${unitId}/points`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({action: action, name: name, type: type})
-                    });
-                    this.fetchStatus();
-                },
-
-                togglePinEditor(id) { this.showPins[id] = !this.showPins[id]; },
-                createNewSchedule() { const newId = 'sch' + (Math.floor(Math.random() * 1000)); const days = {}; for(let i=0; i<7; i++) days[i] = { enabled: true, start: "09:00", end: "17:00" }; this.selectedSchedule = { id: newId, name: "New Schedule", days: days }; },
-                async saveSchedule() { if(!this.selectedSchedule) return; await fetch('/api/schedules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.selectedSchedule) }); this.fetchStatus(); alert("Schedule Saved!"); },
-                async reloadConfig() { if(!confirm('Reload configuration from disk?')) return; await fetch(`/api/system/reload`, { method: 'POST' }); this.fetchStatus(); },
+                } catch (e) { console.error("Zigbee API Error", e); }
                 
-                uploadImage(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (e) => { this.status.site.image = e.target.result; }; reader.readAsDataURL(file); },
-                uploadFloorplan(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (e) => { this.status.site.floorplan = e.target.result; this.saveSiteInfo(); }; reader.readAsDataURL(file); },
-                uploadUnitImage(e, id) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async (ev) => { await fetch(`/api/unit/${id}/image`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: ev.target.result}) }); this.fetchStatus(); }; reader.readAsDataURL(file); },
-                async clearUnitImage(id) { if(!confirm("Remove custom image and revert to default graphic?")) return; await fetch(`/api/unit/${id}/image`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: ""}) }); this.fetchStatus(); },
-                
-                startDrag(unit, event) { if (!this.isEditingGraphics) return; this.draggingUnit = unit; },
-                onDragMove(event) { if (!this.draggingUnit) return; const rect = event.currentTarget.getBoundingClientRect(); this.draggingUnit.x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)); this.draggingUnit.y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)); },
-                async onDragEnd() { if (this.draggingUnit) { await fetch(`/api/unit/${this.draggingUnit.id}/layout`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ x: this.draggingUnit.x, y: this.draggingUnit.y }) }); this.draggingUnit = null; } },
-                getStateColor(state) {
-                    if (state.includes('COOL')) return 'bg-sky-500';
-                    if (state.includes('HEAT')) return 'bg-orange-500';
-                    if (state === 'FAN ONLY') return 'bg-green-500';
-                    if (state.includes('FAIL') || state.includes('EMERGENCY')) return 'bg-red-600 animate-pulse';
-                    if (state.includes('DISABLED')) return 'bg-red-500';
-                    return 'bg-slate-300';
-                },
-                getDotColor(state) { return this.getStateColor(state); },
-                
-                renderUnitGraphic(unit) {
-                    const isFan = Boolean(unit.outputs.fan);
-                    const isCool = Boolean(unit.outputs.cool);
-                    const isHeat = Boolean(unit.outputs.heat);
-                    const damperPct = unit.outputs.damper || 0;
-                    
-                    // FIX: 0% = 0deg (Vertical/Closed), 100% = 90deg (Horizontal/Open)
-                    const damperAngle = (damperPct * 0.9); 
-                    
-                    const colorCool = isCool ? '#0ea5e9' : '#cbd5e1';
-                    const colorHeat = isHeat ? '#f97316' : '#cbd5e1';
-                    const colorFan  = isFan  ? '#22c55e' : '#64748b';
-                    const fanAnim = isFan ? 'animate-spin-fast' : '';
-                    const flowAnim = isFan ? 'flow-line' : 'opacity-0';
-                    const coolClass = isCool ? 'coil-active-cool' : '';
-                    const heatClass = isHeat ? 'coil-active-heat' : '';
-
-                    return `
-                    <svg viewBox="0 0 300 120" class="w-full h-full select-none">
-                        <rect x="10" y="10" width="280" height="100" rx="4" fill="#f8fafc" stroke="#475569" stroke-width="2"/>
-                        <g stroke="#94a3b8" stroke-width="2" fill="none" class="${flowAnim}">
-                            <path d="M 20 40 L 280 40" />
-                            <path d="M 20 60 L 280 60" />
-                            <path d="M 20 80 L 280 80" />
-                        </g>
-
-                        <!-- Return Air Sensor (Primary) - LEFT SIDE -->
-                        <g transform="translate(30, 60)">
-                            <circle cx="0" cy="0" r="3" fill="#334155" />
-                            <line x1="0" y1="0" x2="0" y2="-15" stroke="#334155" stroke-width="1"/>
-                            <text x="-5" y="-20" font-size="9" font-weight="bold" fill="#334155">RAT: ${unit.temp}°</text>
-                        </g>
-
-                        <g transform="translate(60, 20)">
-                            <text x="0" y="-5" font-size="8" fill="#64748b" font-weight="bold">OA: ${Math.round(damperPct)}%</text>
-                            <rect x="0" y="0" width="15" height="80" fill="none" stroke="#64748b" stroke-width="1"/>
-                            <line x1="7.5" y1="10" x2="7.5" y2="25" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" />
-                            <line x1="7.5" y1="35" x2="7.5" y2="50" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" />
-                            <line x1="7.5" y1="60" x2="7.5" y2="75" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" />
-                        </g>
-                        <g transform="translate(90, 20)">
-                            <polyline points="0,0 10,10 0,20 10,30 0,40 10,50 0,60 10,70 0,80" fill="none" stroke="#94a3b8" stroke-width="2"/>
-                        </g>
-                        <g transform="translate(130, 25)" class="${coolClass}">
-                            <rect x="0" y="0" width="20" height="70" fill="none" stroke="${colorCool}" stroke-width="2" rx="2"/>
-                            <line x1="5" y1="5" x2="15" y2="5" stroke="${colorCool}" stroke-width="1" />
-                            <line x1="5" y1="15" x2="15" y2="15" stroke="${colorCool}" stroke-width="1" />
-                            <line x1="5" y1="25" x2="15" y2="25" stroke="${colorCool}" stroke-width="1" />
-                            <line x1="5" y1="35" x2="15" y2="35" stroke="${colorCool}" stroke-width="1" />
-                            <line x1="5" y1="45" x2="15" y2="45" stroke="${colorCool}" stroke-width="1" />
-                            <line x1="5" y1="55" x2="15" y2="55" stroke="${colorCool}" stroke-width="1" />
-                            <line x1="5" y1="65" x2="15" y2="65" stroke="${colorCool}" stroke-width="1" />
-                            <text x="5" y="-8" font-size="10">❄️</text>
-                        </g>
-                        <g transform="translate(170, 25)" class="${heatClass}">
-                            <rect x="0" y="0" width="20" height="70" fill="none" stroke="${colorHeat}" stroke-width="2" rx="2"/>
-                            <path d="M5 5 L15 15 M15 5 L5 15" stroke="${colorHeat}" stroke-width="1.5" />
-                            <path d="M5 25 L15 35 M15 25 L5 35" stroke="${colorHeat}" stroke-width="1.5" />
-                            <path d="M5 45 L15 55 M15 45 L5 55" stroke="${colorHeat}" stroke-width="1.5" />
-                            <path d="M5 65 L15 75 M15 65 L5 75" stroke="${colorHeat}" stroke-width="1.5" />
-                            <text x="5" y="-8" font-size="10">🔥</text>
-                        </g>
-                        <g transform="translate(220, 60)">
-                            <path d="M-25,25 Q-30,0 0,-30 Q30,-30 30,0 L30,25 Z" fill="none" stroke="#475569" stroke-width="2" />
-                            <line x1="-25" y1="25" x2="30" y2="25" stroke="#475569" stroke-width="2" />
-                            <g class="${fanAnim}" style="transform-origin: center; transform-box: fill-box;">
-                                <circle cx="0" cy="0" r="20" fill="none" stroke="${colorFan}" stroke-width="2" stroke-dasharray="2 4"/>
-                                <circle cx="0" cy="0" r="5" fill="${colorFan}" />
-                                <line x1="0" y1="-20" x2="0" y2="20" stroke="${colorFan}" stroke-width="2" />
-                                <line x1="-20" y1="0" x2="20" y2="0" stroke="${colorFan}" stroke-width="2" />
-                            </g>
-                        </g>
-
-                        <!-- Discharge Air Sensor - RIGHT SIDE -->
-                        <g transform="translate(270, 60)">
-                            <circle cx="0" cy="0" r="3" fill="#334155" />
-                            <line x1="0" y1="0" x2="0" y2="-15" stroke="#334155" stroke-width="1"/>
-                            <text x="-20" y="-20" font-size="9" font-weight="bold" fill="#334155">DAT: ${unit.dat_val || '--'}°</text>
-                        </g>
-                    </svg>
-                    `;
-                },
-                
-                async showHistory(id) {
-                    if (this.chart) { this.chart.destroy(); this.chart = null; }
-                    this.historyModal = id;
-                    try {
-                        const res = await fetch(`/api/history/${id}`);
-                        if (!res.ok) throw new Error("Failed to fetch");
-                        const data = await res.json();
-                        if (this.historyModal !== id) return;
-                        this.$nextTick(() => {
-                            const canvas = document.getElementById('chartCanvas');
-                            if (!canvas) return; 
-                            const ctx = canvas.getContext('2d');
-                            if(this.chart) this.chart.destroy();
-                            this.chart = new Chart(ctx, {
-                                type: 'line',
-                                data: {
-                                    labels: data.map(d => new Date(d.ts*1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})),
-                                    datasets: [
-                                        { label: 'Temp', data: data.map(d => d.temp), borderColor: '#0ea5e9', borderWidth: 2, yAxisID: 'y' },
-                                        { label: 'Setpoint', data: data.map(d => d.sp), borderColor: '#22c55e', borderWidth: 2, borderDash: [5, 5], yAxisID: 'y' },
-                                        { label: 'Output %', data: data.map(d => d.out), borderColor: '#f97316', borderWidth: 1, fill: true, backgroundColor: 'rgba(249, 115, 22, 0.1)', yAxisID: 'y1' }
-                                    ]
-                                },
-                                options: { responsive: true, maintainAspectRatio: false, scales: { y: { type: 'linear', display: true, position: 'left', grid: { color: '#f1f5f9' } }, y1: { type: 'linear', display: true, position: 'right', min: 0, max: 100, grid: { display: false } }, x: { grid: { display: false } } } } }
-                            );
-                        });
-                    } catch (e) { console.error("History load error", e); this.historyModal = null; }
+                if(this.zigbeePairingMode) {
+                    setTimeout(() => { this.zigbeePairingMode = false; }, 120000);
                 }
             },
-            mounted() { this.fetchStatus(); this.interval = setInterval(this.fetchStatus, 1000); },
-            beforeUnmount() { clearInterval(this.interval); }
-        }).mount('#app');
+            
+            copyId() {
+                if(this.newDeviceNotification) {
+                    navigator.clipboard.writeText(this.newDeviceNotification);
+                    alert("ID Copied: " + this.newDeviceNotification);
+                }
+            },
+            
+            // ... [REST OF YOUR METHODS REMAIN UNCHANGED] ...
+
+            async fetchLogs() { const res = await fetch('/api/logs'); this.systemLogs = await res.json(); },
+            async fetchPlatform() { const res = await fetch('/api/platform'); this.platformStats = await res.json(); },
+            openDetail(unit) { this.unitDetailModal = unit; },
+            closeHistory() { if (this.chart) { this.chart.destroy(); this.chart = null; } this.historyModal = null; },
+            async doLogin() { try { const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.loginForm) }); if(!res.ok) throw new Error("Invalid Credentials"); await this.fetchStatus(); } catch(e) { this.loginError = e.message; } },
+            async doLogout() { await fetch('/api/logout', { method: 'POST' }); this.status.authenticated = false; this.loginForm = {username:'',password:''}; },
+            async saveGlobalSettings() { await fetch('/api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.status.global_settings) }); this.fetchStatus(); },
+            async addHoliday() { if(!this.newHoliday.date) return; this.status.global_settings.holidays[this.newHoliday.date] = this.newHoliday.name || "Holiday"; await this.saveGlobalSettings(); this.newHoliday = { date: '', name: '' }; },
+            async deleteHoliday(date) { delete this.status.global_settings.holidays[date]; await this.saveGlobalSettings(); },
+            async toggleUnit(id, state) { await fetch(`/api/unit/${id}/toggle?enable=${state}`, { method: 'POST' }); this.fetchStatus(); },
+            async setOccupancy(mode) { await fetch(`/api/system/occupancy`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode: mode}) }); this.fetchStatus(); },
+            async saveSiteInfo() { await fetch('/api/admin/site', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.status.site) }); alert("Site Info Saved"); this.fetchStatus(); },
+            async override(unitId, key, value) { await fetch(`/api/unit/${unitId}/override`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, value: value}) }); this.fetchStatus(); },
+            async updateSetpoint(id, key, val) { await fetch(`/api/unit/${id}/setpoint`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, value: parseFloat(val)}) }); this.fetchStatus(); },
+            async updatePin(unitId, key, pin) { const pinVal = pin === "" ? null : parseInt(pin); await fetch(`/api/unit/${unitId}/pin`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, pin: pinVal}) }); this.fetchStatus(); },
+            async updateNet(unitId, key, val) { const pl = {}; pl[key] = val; await fetch(`/api/unit/${unitId}/net`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(pl) }); this.fetchStatus(); },
+            async assignSchedule(unitId, schedId) { await fetch(`/api/unit/${unitId}/schedule?schedule_id=${schedId}`, { method: 'POST' }); this.fetchStatus(); },
+            async createUnit() { if(!this.newUnit.name) return alert("Name is required"); await fetch('/api/units', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.newUnit) }); this.showAddUnit = false; this.newUnit = { name: "", type: "RTU", modbus_addr: 0, secondary_sensor: null, mqtt_topic: "", bacnet_ip: "", bacnet_obj: "" }; this.fetchStatus(); },
+            async deleteUnit(id) { if(!confirm("Are you sure you want to delete this unit?")) return; await fetch(`/api/units/${id}`, { method: 'DELETE' }); this.fetchStatus(); },
+            async addUser() { if(!this.newUser.username || !this.newUser.password) return; await fetch('/api/admin/users', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.newUser) }); this.newUser = { username: '', password: '', role: 'operator' }; this.fetchStatus(); },
+            async deleteUser(username) { if(!confirm(`Delete user ${username}?`)) return; await fetch(`/api/admin/users/${username}`, { method: 'DELETE' }); this.fetchStatus(); },
+            async ackAlarm(unitId, key) { await fetch(`/api/unit/${unitId}/ack`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({alarm_key: key}) }); this.fetchStatus(); },
+            async toggleAlarmConfig(unitId, enabled) { await fetch(`/api/unit/${unitId}/alarms/config`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: enabled}) }); this.fetchStatus(); },
+            
+            async addPoint() {
+                if(!this.newPoint.name || !this.unitDetailModal) return;
+                await fetch(`/api/unit/${this.unitDetailModal.id}/points`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'add', name: this.newPoint.name, type: this.newPoint.type, register: this.newPoint.type==='sensor'?this.newPoint.val:0, value: this.newPoint.type==='setpoint'?this.newPoint.val:0})
+                });
+                this.newPoint = { name: '', type: 'sensor', val: 0 };
+                this.fetchStatus();
+            },
+            async managePoint(unitId, action, name, type) {
+                if(action === 'delete' && !confirm("Delete this point?")) return;
+                await fetch(`/api/unit/${unitId}/points`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: action, name: name, type: type})
+                });
+                this.fetchStatus();
+            },
+
+            togglePinEditor(id) { this.showPins[id] = !this.showPins[id]; },
+            createNewSchedule() { const newId = 'sch' + (Math.floor(Math.random() * 1000)); const days = {}; for(let i=0; i<7; i++) days[i] = { enabled: true, start: "09:00", end: "17:00" }; this.selectedSchedule = { id: newId, name: "New Schedule", days: days }; },
+            async saveSchedule() { if(!this.selectedSchedule) return; await fetch('/api/schedules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.selectedSchedule) }); this.fetchStatus(); alert("Schedule Saved!"); },
+            async reloadConfig() { if(!confirm('Reload configuration from disk?')) return; await fetch(`/api/system/reload`, { method: 'POST' }); this.fetchStatus(); },
+            
+            uploadImage(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (e) => { this.status.site.image = e.target.result; }; reader.readAsDataURL(file); },
+            uploadFloorplan(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (e) => { this.status.site.floorplan = e.target.result; this.saveSiteInfo(); }; reader.readAsDataURL(file); },
+            uploadUnitImage(e, id) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async (ev) => { await fetch(`/api/unit/${id}/image`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: ev.target.result}) }); this.fetchStatus(); }; reader.readAsDataURL(file); },
+            async clearUnitImage(id) { if(!confirm("Remove custom image and revert to default graphic?")) return; await fetch(`/api/unit/${id}/image`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: ""}) }); this.fetchStatus(); },
+            
+            startDrag(unit, event) { if (!this.isEditingGraphics) return; this.draggingUnit = unit; },
+            onDragMove(event) { if (!this.draggingUnit) return; const rect = event.currentTarget.getBoundingClientRect(); this.draggingUnit.x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)); this.draggingUnit.y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)); },
+            async onDragEnd() { if (this.draggingUnit) { await fetch(`/api/unit/${this.draggingUnit.id}/layout`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ x: this.draggingUnit.x, y: this.draggingUnit.y }) }); this.draggingUnit = null; } },
+            getStateColor(state) {
+                if (state.includes('COOL')) return 'bg-sky-500';
+                if (state.includes('HEAT')) return 'bg-orange-500';
+                if (state === 'FAN ONLY') return 'bg-green-500';
+                if (state.includes('FAIL') || state.includes('EMERGENCY')) return 'bg-red-600 animate-pulse';
+                if (state.includes('DISABLED')) return 'bg-red-500';
+                return 'bg-slate-300';
+            },
+            getDotColor(state) { return this.getStateColor(state); },
+            
+            renderUnitGraphic(unit) {
+                const isFan = Boolean(unit.outputs.fan);
+                const isCool = Boolean(unit.outputs.cool);
+                const isHeat = Boolean(unit.outputs.heat);
+                const damperPct = unit.outputs.damper || 0;
+                const damperAngle = (damperPct * 0.9); 
+                const colorCool = isCool ? '#0ea5e9' : '#cbd5e1';
+                const colorHeat = isHeat ? '#f97316' : '#cbd5e1';
+                const colorFan  = isFan  ? '#22c55e' : '#64748b';
+                const fanAnim = isFan ? 'animate-spin-fast' : '';
+                const flowAnim = isFan ? 'flow-line' : 'opacity-0';
+                const coolClass = isCool ? 'coil-active-cool' : '';
+                const heatClass = isHeat ? 'coil-active-heat' : '';
+
+                return `
+                <svg viewBox="0 0 300 120" class="w-full h-full select-none">
+                    <rect x="10" y="10" width="280" height="100" rx="4" fill="#f8fafc" stroke="#475569" stroke-width="2"/>
+                    <g stroke="#94a3b8" stroke-width="2" fill="none" class="${flowAnim}">
+                        <path d="M 20 40 L 280 40" /><path d="M 20 60 L 280 60" /><path d="M 20 80 L 280 80" />
+                    </g>
+                    <g transform="translate(30, 60)"><circle cx="0" cy="0" r="3" fill="#334155" /><line x1="0" y1="0" x2="0" y2="-15" stroke="#334155" stroke-width="1"/><text x="-5" y="-20" font-size="9" font-weight="bold" fill="#334155">RAT: ${unit.temp}°</text></g>
+                    <g transform="translate(60, 20)"><text x="0" y="-5" font-size="8" fill="#64748b" font-weight="bold">OA: ${Math.round(damperPct)}%</text><rect x="0" y="0" width="15" height="80" fill="none" stroke="#64748b" stroke-width="1"/><line x1="7.5" y1="10" x2="7.5" y2="25" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" /><line x1="7.5" y1="35" x2="7.5" y2="50" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" /><line x1="7.5" y1="60" x2="7.5" y2="75" stroke="#475569" stroke-width="3" stroke-linecap="round" class="damper-blade" style="transform: rotate(${damperAngle}deg)" /></g>
+                    <g transform="translate(90, 20)"><polyline points="0,0 10,10 0,20 10,30 0,40 10,50 0,60 10,70 0,80" fill="none" stroke="#94a3b8" stroke-width="2"/></g>
+                    <g transform="translate(130, 25)" class="${coolClass}"><rect x="0" y="0" width="20" height="70" fill="none" stroke="${colorCool}" stroke-width="2" rx="2"/><line x1="5" y1="5" x2="15" y2="5" stroke="${colorCool}" stroke-width="1" /><line x1="5" y1="15" x2="15" y2="15" stroke="${colorCool}" stroke-width="1" /><line x1="5" y1="25" x2="15" y2="25" stroke="${colorCool}" stroke-width="1" /><line x1="5" y1="35" x2="15" y2="35" stroke="${colorCool}" stroke-width="1" /><line x1="5" y1="45" x2="15" y2="45" stroke="${colorCool}" stroke-width="1" /><line x1="5" y1="55" x2="15" y2="55" stroke="${colorCool}" stroke-width="1" /><line x1="5" y1="65" x2="15" y2="65" stroke="${colorCool}" stroke-width="1" /><text x="5" y="-8" font-size="10">❄️</text></g>
+                    <g transform="translate(170, 25)" class="${heatClass}"><rect x="0" y="0" width="20" height="70" fill="none" stroke="${colorHeat}" stroke-width="2" rx="2"/><path d="M5 5 L15 15 M15 5 L5 15" stroke="${colorHeat}" stroke-width="1.5" /><path d="M5 25 L15 35 M15 25 L5 35" stroke="${colorHeat}" stroke-width="1.5" /><path d="M5 45 L15 55 M15 45 L5 55" stroke="${colorHeat}" stroke-width="1.5" /><path d="M5 65 L15 75 M15 65 L5 75" stroke="${colorHeat}" stroke-width="1.5" /><text x="5" y="-8" font-size="10">🔥</text></g>
+                    <g transform="translate(220, 60)"><path d="M-25,25 Q-30,0 0,-30 Q30,-30 30,0 L30,25 Z" fill="none" stroke="#475569" stroke-width="2" /><line x1="-25" y1="25" x2="30" y2="25" stroke="#475569" stroke-width="2" /><g class="${fanAnim}" style="transform-origin: center; transform-box: fill-box;"><circle cx="0" cy="0" r="20" fill="none" stroke="${colorFan}" stroke-width="2" stroke-dasharray="2 4"/><circle cx="0" cy="0" r="5" fill="${colorFan}" /><line x1="0" y1="-20" x2="0" y2="20" stroke="${colorFan}" stroke-width="2" /><line x1="-20" y1="0" x2="20" y2="0" stroke="${colorFan}" stroke-width="2" /></g></g>
+                    <g transform="translate(270, 60)"><circle cx="0" cy="0" r="3" fill="#334155" /><line x1="0" y1="0" x2="0" y2="-15" stroke="#334155" stroke-width="1"/><text x="-20" y="-20" font-size="9" font-weight="bold" fill="#334155">DAT: ${unit.dat_val || '--'}°</text></g>
+                </svg>
+                `;
+            },
+            
+            async showHistory(id) {
+                if (this.chart) { this.chart.destroy(); this.chart = null; }
+                this.historyModal = id;
+                try {
+                    const res = await fetch(`/api/history/${id}`);
+                    if (!res.ok) throw new Error("Failed to fetch");
+                    const data = await res.json();
+                    if (this.historyModal !== id) return;
+                    this.$nextTick(() => {
+                        const canvas = document.getElementById('chartCanvas');
+                        if (!canvas) return; 
+                        const ctx = canvas.getContext('2d');
+                        if(this.chart) this.chart.destroy();
+                        this.chart = new Chart(ctx, {
+                            type: 'line',
+                            data: {
+                                labels: data.map(d => new Date(d.ts*1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})),
+                                datasets: [
+                                    { label: 'Temp', data: data.map(d => d.temp), borderColor: '#0ea5e9', borderWidth: 2, yAxisID: 'y' },
+                                    { label: 'Setpoint', data: data.map(d => d.sp), borderColor: '#22c55e', borderWidth: 2, borderDash: [5, 5], yAxisID: 'y' },
+                                    { label: 'Output %', data: data.map(d => d.out), borderColor: '#f97316', borderWidth: 1, fill: true, backgroundColor: 'rgba(249, 115, 22, 0.1)', yAxisID: 'y1' }
+                                ]
+                            },
+                            options: { responsive: true, maintainAspectRatio: false, scales: { y: { type: 'linear', display: true, position: 'left', grid: { color: '#f1f5f9' } }, y1: { type: 'linear', display: true, position: 'right', min: 0, max: 100, grid: { display: false } }, x: { grid: { display: false } } } } }
+                        );
+                    });
+                } catch (e) { console.error("History load error", e); this.historyModal = null; }
+            }
+        },
+        mounted() { this.fetchStatus(); this.interval = setInterval(this.fetchStatus, 1000); },
+        beforeUnmount() { clearInterval(this.interval); }
+    }).mount('#app');
     </script>
 </body>
 </html>
